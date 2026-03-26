@@ -47,13 +47,13 @@ python infer.py --model_path rtdetr.rknn --source demo.mp4 --img_size 640
 接入 USB 摄像头实时测试：
 Bash
 python infer.py --model_path rtdetr.rknn --source 0
-
+```
 🐍 3. Python 推理 (Python Inference)
 我们提供了高度工程化的 Python 推理脚本，支持 单图、本地视频流、USB 摄像头，并内置动态 FPS 测速。
 
 运行方式：
 
-Bash
+```bash
 cd python/
 
 # 1. 单张图片测试 (安静出图)
@@ -65,14 +65,13 @@ python infer.py --model_path ../model/best.rknn --source ../test.mp4
 # 3. USB 摄像头实时推理 (注意替换实际的 /dev/video 节点)
 python infer.py --model_path ../model/best.rknn --source 21 
 检测结果（图片或视频）将自动保存在当前目录下。
-
+```
 ⚡ 4. C++ 推理 (C++ Inference)
 为了彻底解决 Python 单线程下 NPU 等待 CPU 前后处理的性能瓶颈，我们用 C++ 编写了三段式异步流水线 (PipelineManager)。
 系统将任务解耦为：洗菜工(前处理) -> 主厨(NPU多核并行) -> 洗碗工(后处理与渲染)，大幅提升吞吐量。
 
 编译流程：
-
-Bash
+```bash
 cd cpp/
 mkdir build && cd build
 cmake ..
@@ -95,6 +94,7 @@ cd install/rknn_rtdetr_demo_Linux/
 
 # 3. NPU 极限压测 (循环推理单图 1000 次计算极限 FPS)
 ./rknn_rtdetr_demo -m ../../../model/best.rknn -s ../../../img/uav.jpg -l 1000
+```
 📊 5. 效果展示 (Results)
 🎯 检测精度与效果
 (在这里插入你的检测结果截图，比如无人机或密集人群的检测图)
