@@ -1,0 +1,23 @@
+# 编译产物
+cpp/build/
+cpp/install/
+
+# 模型权重文件 (绝对不能进 Git)
+*.pt
+*.onnx
+*.rknn
+*.weights
+
+# 视频和图像测试集
+*.mp4
+*.avi
+*.jpg
+*.png
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 你的本地结果文件
+result_video.mp4
+result_frame_*.jpg
