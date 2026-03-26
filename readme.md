@@ -5,7 +5,9 @@
 [![Language: C++/Python](https://img.shields.io/badge/Language-C++%20%7C%20Python-green.svg)]()
 
 本项目致力于将先进的 **RT-DETR (Real-Time DEtection TRansformer)** 算法部署到 **RK3588** 边缘计算平台上。
+
 凭借 RT-DETR **“去 NMS (NMS-free)”** 的架构优势，结合我们专门为 RK3588 设计的 **C++ 异步多线程流水线**，完美解决了传统目标检测算法在边缘端后处理耗时过长的痛点，最大化压榨 NPU 算力！
+
 **算子优化请参考博客：[Matmul#2](https://blog.csdn.net/weixin_65585850/article/details/158509230?spm=1001.2014.3001.5502), [grid_sample](https://blog.csdn.net/weixin_65585850/article/details/158575468?spm=1001.2014.3001.5502)**
 ---
 
