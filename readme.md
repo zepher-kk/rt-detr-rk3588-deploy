@@ -6,7 +6,7 @@
 
 本项目致力于将先进的 **RT-DETR (Real-Time DEtection TRansformer)** 算法部署到 **RK3588** 边缘计算平台上。
 凭借 RT-DETR **“去 NMS (NMS-free)”** 的架构优势，结合我们专门为 RK3588 设计的 **C++ 异步多线程流水线**，完美解决了传统目标检测算法在边缘端后处理耗时过长的痛点，最大化压榨 NPU 算力！
-
+**算子优化请参考博客：[Matmul#2](https://blog.csdn.net/weixin_65585850/article/details/158509230?spm=1001.2014.3001.5502), [grid_sample](https://blog.csdn.net/weixin_65585850/article/details/158575468?spm=1001.2014.3001.5502)**
 ---
 
 ## 🛠️ 1. 环境配置 (Environment Setup)
@@ -28,6 +28,7 @@
 ---
 
 ## 🔄 2. 模型转换 (Model Conversion)
+**[模型下载](https://drive.google.com/file/d/13a_nRCRF-imaZvSFmASyTnmdQR8I3RTm/view?usp=sharing),包含了pt，onnx，rknn模型**
 
 RT-DETR 采用一对一匈牙利匹配，**直接输出 300 个预测框**。
 > ⚠️ **注意**：导出 ONNX 时请务必使用 **静态 Shape (Static Shape)**，并去掉所有后处理 NMS 节点，保持最纯粹的张量输出（例如 `[1, 300, 14]`）。
@@ -115,8 +116,7 @@ C++ 异步流水线：约 ~X FPS (3个 NPU 核心满载，性能提升数倍！)
 
 下一步优化 (TODO)：目前前后处理仍依赖 CPU 端的 OpenCV。未来计划引入 Rockchip 官方的 RGA (2D 硬件加速器) 进行零 CPU 负载的图像缩放与格式转换，实现真正的极致性能。
 
-👉 更详细的技术内幕与原理解析，请移步我的博客：[你的CSDN或个人博客链接]
-```
+👉 更详细的技术内幕与原理解析，请移步我的博客：[你的CSDN或个人博客链接](https://blog.csdn.net/weixin_65585850?type=blog)
 
 ------
 
