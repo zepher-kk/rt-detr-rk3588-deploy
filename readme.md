@@ -30,7 +30,7 @@
 ---
 
 ## 🔄 2. 模型转换 (Model Conversion)
-**[模型下载]([https://drive.google.com/file/d/13a_nRCRF-imaZvSFmASyTnmdQR8I3RTm/view?usp=sharing](https://drive.google.com/drive/folders/1zS1hq9Hf5GdOKOKwz2djPmIrUm8cQLn_?usp=sharing)),包含了pt，onnx，rknn模型**
+**[模型下载](https://drive.google.com/drive/folders/1zS1hq9Hf5GdOKOKwz2djPmIrUm8cQLn_?usp=sharing),包含了pt，onnx，rknn模型**
 
 RT-DETR 采用一对一匈牙利匹配，**直接输出 300 个预测框**。
 > ⚠️ **注意**：导出 ONNX 时请务必使用 **静态 Shape (Static Shape)**，并去掉所有后处理 NMS 节点，保持最纯粹的张量输出（例如 `[1, 300, 14]`）。
