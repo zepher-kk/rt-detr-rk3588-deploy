@@ -1,83 +1,352 @@
 #include "rknn_detector.h"
+#include "drm_alloc.h"
+
+#include <fstream>
 #include <iostream>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <unistd.h>
+#include <sys/ioctl.h>
 
-RKNNDetector::RKNNDetector() : ctx_(0), model_data_(nullptr), is_init_(false) {}
-
-RKNNDetector::~RKNNDetector() {
-    if (ctx_ > 0) rknn_destroy(ctx_);
-    if (model_data_) free(model_data_);
+// ============================================================================
+// 辅助函数：加载模型文件
+// ============================================================================
+unsigned char* RKNNDetector::load_model(const char* filename, int* model_size)
+{
+	FILE* fp = fopen(filename, "rb");
+	if (!fp)
+	{
+		std::cerr << "[RKNN] Cannot open model: " << filename << "\n";
+		return nullptr;
+	}
+	fseek(fp, 0, SEEK_END);
+	int size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	unsigned char* data = (unsigned char*)malloc(size);
+	if (data)
+	{
+		fread(data, 1, size, fp);
+	}
+	fclose(fp);
+	*model_size = size;
+	return data;
 }
 
-unsigned char* RKNNDetector::load_model(const char* filename, int* model_size) {
-    FILE* fp = fopen(filename, "rb");
-    if (!fp) return nullptr;
-    fseek(fp, 0, SEEK_END);
-    int size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    unsigned char* data = (unsigned char*)malloc(size);
-    if (data) fread(data, 1, size, fp);
-    fclose(fp);
-    *model_size = size;
-    return data;
+// ============================================================================
+// 构造函数 / 析构函数
+// ============================================================================
+RKNNDetector::RKNNDetector()
+{
+	memset(&boxes_attr_, 0, sizeof(boxes_attr_));
+	memset(&logits_attr_, 0, sizeof(logits_attr_));
 }
 
-bool RKNNDetector::init(const std::string& model_path) {
-    int model_size;
-    model_data_ = load_model(model_path.c_str(), &model_size);
-    if (!model_data_) return false;
-    int ret = rknn_init(&ctx_, model_data_, model_size, 0, NULL);
-    if (ret < 0) return false;
-    is_init_ = true;
-    return true;
+RKNNDetector::~RKNNDetector()
+{
+	if (ctx_)
+	{
+		rknn_destroy(ctx_);
+		ctx_ = 0;
+	}
+	if (model_data_)
+	{
+		free(model_data_);
+		model_data_ = nullptr;
+	}
 }
 
-bool RKNNDetector::detect(const cv::Mat& orig_img, float conf_thres, std::vector<DetectResult>& results) { return false; }
+// ============================================================================
+// 查询输入输出属性（通过名称匹配）
+// ============================================================================
+bool RKNNDetector::query_io_attrs()
+{
+	rknn_input_output_num io_num;
+	int ret = rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num));
+	if (ret < 0)
+	{
+		std::cerr << "[RKNN] query IN_OUT_NUM failed: " << ret << "\n";
+		return false;
+	}
+	n_input_  = io_num.n_input;
+	n_output_ = io_num.n_output;
+	std::cerr << "[RKNN] n_input=" << n_input_ << " n_output=" << n_output_ << "\n";
 
-bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img, std::vector<float>& out_boxes, std::vector<float>& out_logits, int& num_boxes) {
-    rknn_input inputs[1];
-    memset(inputs, 0, sizeof(inputs));
-    inputs[0].index = 0;
-    
-    // 🌟 核心修复：把 RKNN_TENSOR_FLOAT32 改成 RKNN_TENSOR_UINT8，100% 对齐 Python
-    inputs[0].type = RKNN_TENSOR_UINT8; 
-    
-    inputs[0].size = preprocessed_img.total() * preprocessed_img.elemSize();
-    inputs[0].fmt = RKNN_TENSOR_NHWC;
-    inputs[0].buf = preprocessed_img.data;
-    
-    // ... 后面的代码都不用动 ...
+	// 查询输入（仅第一个，用于后续零拷贝设置）
+	if (n_input_ > 0)
+	{
+		input_attr_.index = 0;
+		int ret = rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &input_attr_, sizeof(input_attr_));
+		if (ret == 0)
+		{
+			std::cerr << "[RKNN] input[0] dims=" << input_attr_.n_dims << " [";
+			for (int d = 0; d < (int)input_attr_.n_dims; ++d)
+			{
+				std::cerr << input_attr_.dims[d] << (d + 1 < (int)input_attr_.n_dims ? "," : "");
+			}
+			std::cerr << "] fmt=" << input_attr_.fmt << " type=" << input_attr_.type << "\n";
+		}
+	}
 
-    if (rknn_inputs_set(ctx_, 1, inputs) < 0) return false;
-    if (rknn_run(ctx_, NULL) < 0) return false;
-    
-    rknn_input_output_num io_num;
-    rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num));
+	// 遍历所有输出，通过名称识别 boxes 和 logits
+	boxes_idx_ = -1;
+	logits_idx_ = -1;
+	for (int i = 0; i < n_output_; ++i)
+	{
+		rknn_tensor_attr attr;
+		attr.index = i;
+		ret = rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr));
+		if (ret < 0)
+		{
+			std::cerr << "[RKNN] query output[" << i << "] failed: " << ret << "\n";
+			continue;
+		}
+		std::cerr << "[RKNN] output[" << i << "] n_elems=" << attr.n_elems
+		          << " type=" << attr.type << " fmt=" << attr.fmt
+		          << " scale=" << attr.scale << " zp=" << attr.zp
+		          << " name=" << attr.name << "\n";
 
-    rknn_output outputs[io_num.n_output];
-    memset(outputs, 0, sizeof(outputs));
-    for (int i = 0; i < io_num.n_output; i++) outputs[i].want_float = 1; 
-    rknn_outputs_get(ctx_, io_num.n_output, outputs, NULL);
+		std::string name(attr.name);
+		if (name == "pred_boxes")
+		{
+			boxes_idx_ = i;
+			boxes_attr_ = attr;
+		}
+		else if (name == "pred_logits")
+		{
+			logits_idx_ = i;
+			logits_attr_ = attr;
+		}
+	}
 
-    int boxes_idx = -1, logits_idx = -1;
-    for (int i = 0; i < io_num.n_output; i++) {
-        rknn_tensor_attr out_attr;
-        out_attr.index = i;
-        rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &out_attr, sizeof(out_attr));
-        if (out_attr.n_elems == 300 * 4) boxes_idx = i;
-        if (out_attr.n_elems == 300 * NUM_CLASSES) logits_idx = i;
-    }
+	// 若名称匹配失败，则通过 n_elems 启发式识别（兼容老模型）
+	if (boxes_idx_ < 0 || logits_idx_ < 0)
+	{
+		std::cerr << "[RKNN] Name matching failed, fallback to n_elems heuristic\n";
+		for (int i = 0; i < n_output_; ++i)
+		{
+			rknn_tensor_attr attr;
+			attr.index = i;
+			rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr));
+			// 假设 boxes 具有 4 的倍数元素
+			if (attr.n_elems % 4 == 0 && attr.n_elems > 4)
+			{
+				// 可能的 boxes
+				if (boxes_idx_ < 0)
+				{
+					boxes_idx_ = i;
+					boxes_attr_ = attr;
+				}
+			}
+			// 假设 logits 的 n_elems 是 boxes 的 NUM_CLASSES 倍
+			// 更可靠：logits 的元素数通常大于 boxes
+			if (attr.n_elems > boxes_attr_.n_elems && attr.n_elems % 300 == 0)
+			{
+				logits_idx_ = i;
+				logits_attr_ = attr;
+			}
+		}
+	}
 
-    if (boxes_idx != -1 && logits_idx != -1) {
-        float* b_data = (float*)outputs[boxes_idx].buf;
-        float* l_data = (float*)outputs[logits_idx].buf;
-        out_boxes.assign(b_data, b_data + (300 * 4));
-        out_logits.assign(l_data, l_data + (300 * NUM_CLASSES));
-        num_boxes = 300;
-    }
+	if (boxes_idx_ < 0 || logits_idx_ < 0)
+	{
+		std::cerr << "[RKNN] FATAL: cannot identify boxes/logits output\n";
+		return false;
+	}
 
-    rknn_outputs_release(ctx_, io_num.n_output, outputs);
-    return true;
+	// 从 logits 推断类别数(日志)
+	int detected_classes = logits_attr_.n_elems / 300;
+	std::cerr << "[RKNN] Detected num_classes from model = " << detected_classes
+	          << ", but forcing to " << NUM_CLASSES << " (as defined in types.h)\n";
+
+	return true;
+}
+
+// ============================================================================
+// 初始化
+// ============================================================================
+bool RKNNDetector::init(const std::string& model_path, rknn_core_mask core_mask)
+{
+	int model_size;
+	model_data_ = load_model(model_path.c_str(), &model_size);
+	if (!model_data_)
+	{
+		std::cerr << "[RKNN] load_model failed\n";
+		return false;
+	}
+
+	int ret = rknn_init(&ctx_, model_data_, model_size, 0, nullptr);
+	if (ret < 0)
+	{
+		std::cerr << "[RKNN] rknn_init failed: " << ret << "\n";
+		return false;
+	}
+
+	// 绑定 NPU 核心（可选）
+	if (core_mask != RKNN_NPU_CORE_AUTO)
+	{
+		ret = rknn_set_core_mask(ctx_, core_mask);
+		if (ret < 0)
+		{
+			std::cerr << "[RKNN] rknn_set_core_mask failed: " << ret << "\n";
+			// 不致命，继续
+		}
+		else
+		{
+			std::cerr << "[RKNN] Set core mask to " << core_mask << "\n";
+		}
+	}
+	else
+	{
+		std::cerr << "[RKNN] Using auto NPU core selection\n";
+	}
+
+	if (!query_io_attrs())
+	{
+		return false;
+	}
+
+	is_init_ = true;
+	return true;
+}
+
+// ============================================================================
+// 零拷贝推理（输入为 DMA buffer）
+// ============================================================================
+bool RKNNDetector::infer_zero_copy(const DmaBufferPtr& input_buf,
+                                   std::vector<float>& out_boxes,
+                                   std::vector<float>& out_logits,
+                                   int& num_boxes,
+                                   int& num_classes)
+{
+	if (!is_init_ || !input_buf) return false;
+
+	rknn_input inputs[1];
+	memset(inputs, 0, sizeof(inputs));
+	inputs[0].index = 0;
+	inputs[0].type = RKNN_TENSOR_UINT8;
+	inputs[0].fmt = RKNN_TENSOR_NHWC;
+	inputs[0].size = input_buf->size;
+	inputs[0].buf = input_buf->ptr;
+	inputs[0].pass_through = 0;
+
+	if (rknn_inputs_set(ctx_, 1, inputs) < 0) return false;
+	if (rknn_run(ctx_, NULL) < 0) return false;
+
+	rknn_input_output_num io_num;
+	if (rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num)) < 0) return false;
+
+	std::vector<rknn_output> outputs(io_num.n_output);
+	for (int i = 0; i < io_num.n_output; ++i)
+	{
+		outputs[i].want_float = 1;   // 关键：请求 float 反量化
+		outputs[i].is_prealloc = 0;
+		outputs[i].buf = nullptr;
+		outputs[i].size = 0;
+	}
+	if (rknn_outputs_get(ctx_, io_num.n_output, outputs.data(), NULL) < 0) return false;
+
+	// 识别 boxes 和 logits（按元素数）
+	int boxes_idx = -1, logits_idx = -1;
+	for (int i = 0; i < io_num.n_output; ++i)
+	{
+		rknn_tensor_attr attr;
+		attr.index = i;
+		if (rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr)) == 0)
+		{
+			if (attr.n_elems == 300 * 4) boxes_idx = i;
+			if (attr.n_elems == 300 * NUM_CLASSES) logits_idx = i;
+		}
+	}
+
+	if (boxes_idx != -1 && logits_idx != -1)
+	{
+		float* b_data = (float*)outputs[boxes_idx].buf;
+		float* l_data = (float*)outputs[logits_idx].buf;
+		out_boxes.assign(b_data, b_data + 300 * 4);
+		out_logits.assign(l_data, l_data + 300 * NUM_CLASSES);
+		num_boxes = 300;
+		num_classes = NUM_CLASSES;
+	}
+	else
+	{
+		rknn_outputs_release(ctx_, io_num.n_output, outputs.data());
+		return false;
+	}
+
+	rknn_outputs_release(ctx_, io_num.n_output, outputs.data());
+	return true;
+}
+// ============================================================================
+// 传统推理（输入为 cv::Mat）
+// ============================================================================
+bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img,
+                              std::vector<float>& out_boxes,
+                              std::vector<float>& out_logits,
+                              int& num_boxes,
+                              int& num_classes)
+{
+	if (!is_init_ || preprocessed_img.empty())
+	{
+		std::cerr << "[RKNN] infer_only: not initialized or empty image\n";
+		return false;
+	}
+
+	// 1. 设置输入（使用 rknn_inputs_set）
+	rknn_input inputs[1];
+	memset(inputs, 0, sizeof(inputs));
+	inputs[0].index = 0;
+	inputs[0].type  = RKNN_TENSOR_UINT8;
+	inputs[0].fmt   = RKNN_TENSOR_NHWC;
+	inputs[0].size  = preprocessed_img.total() * preprocessed_img.elemSize();
+	inputs[0].buf   = preprocessed_img.data;
+	inputs[0].pass_through = 0;
+	if (rknn_inputs_set(ctx_, 1, inputs) < 0)
+	{
+		std::cerr << "[RKNN] rknn_inputs_set failed\n";
+		return false;
+	}
+
+	// 2. 推理
+	int ret = rknn_run(ctx_, nullptr);
+	if (ret < 0)
+	{
+		std::cerr << "[RKNN] rknn_run failed: " << ret << "\n";
+		return false;
+	}
+
+	// 3. 获取输出
+	std::vector<rknn_output> outputs(n_output_);
+	for (int i = 0; i < n_output_; ++i)
+	{
+		outputs[i].want_float  = 1;
+		outputs[i].is_prealloc = 0;
+		outputs[i].buf         = nullptr;
+		outputs[i].size        = 0;
+	}
+	ret = rknn_outputs_get(ctx_, n_output_, outputs.data(), nullptr);
+	if (ret < 0)
+	{
+		std::cerr << "[RKNN] rknn_outputs_get failed: " << ret << "\n";
+		return false;
+	}
+
+	// 4. 提取
+	if (boxes_idx_ >= 0 && logits_idx_ >= 0)
+	{
+		float* b_data = (float*)outputs[boxes_idx_].buf;
+		float* l_data = (float*)outputs[logits_idx_].buf;
+		size_t b_count = outputs[boxes_idx_].size / sizeof(float);
+		size_t l_count = outputs[logits_idx_].size / sizeof(float);
+		out_boxes.assign(b_data, b_data + b_count);
+		out_logits.assign(l_data, l_data + l_count);
+		num_boxes  = b_count / 4;
+		num_classes = NUM_CLASSES;
+	}
+	else
+	{
+		std::cerr << "[RKNN] No boxes/logits indices found\n";
+		ret = -1;
+	}
+
+	rknn_outputs_release(ctx_, n_output_, outputs.data());
+	return ret == 0;
 }

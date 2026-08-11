@@ -1,71 +1,189 @@
 #pragma once
+
 #include <vector>
 #include <thread>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
 #include <string>
-#include <map>  // 🌟 引入 map 用于帧重排
+#include <map>
+#include <atomic>
+#include <chrono>
 #include <opencv2/opencv.hpp>
+
+#include "types.h"
 #include "rknn_detector.h"
+#include "rknn_api.h"
 
-struct RawTask { int frame_id; cv::Mat orig_img; };
-struct NpuTask { int frame_id; cv::Mat orig_img; cv::Mat preprocessed_img; };
-struct PostTask {
-    int frame_id;
-    cv::Mat orig_img;
-    std::vector<float> pred_boxes;
-    std::vector<float> pred_logits;
-    int num_boxes;
-};
-
+// ============================================================================
+// BoundedSafeQueue（有界阻塞队列）
+// ============================================================================
+/**
+ * @brief 线程安全的有界阻塞队列，支持毒丸（nullptr）终止。
+ * @tparam T 存储的元素类型
+ */
 template <typename T>
-class SafeQueue {
-private:
-    std::queue<T> queue_;
-    std::mutex mtx_;
-    std::condition_variable cv_;
-public:
-    void push(T task) {
-        std::unique_lock<std::mutex> lock(mtx_);
-        queue_.push(task);
-        lock.unlock();
-        cv_.notify_one();
-    }
-    bool pop(T& task, bool& is_running) {
-        std::unique_lock<std::mutex> lock(mtx_);
-        cv_.wait(lock, [this, &is_running]() { return !queue_.empty() || !is_running; });
-        if (!is_running && queue_.empty()) return false;
-        task = queue_.front();
-        queue_.pop();
-        return true;
-    }
+class BoundedSafeQueue
+{
+	private:
+		std::queue<T>        queue_;
+		mutable std::mutex   mtx_;
+		std::condition_variable cv_not_full_;
+		std::condition_variable cv_not_empty_;
+		size_t               capacity_;
+		std::atomic<bool>    is_running_{true};
+
+	public:
+		explicit BoundedSafeQueue(size_t cap) : capacity_(cap) {}
+
+		/** @brief 关闭队列，唤醒所有等待线程。 */
+		void shutdown()
+		{
+			is_running_ = false;
+			cv_not_full_.notify_all();
+			cv_not_empty_.notify_all();
+		}
+
+		/**
+		 * @brief 入队一个任务，若队列满则阻塞。
+		 * @param task 要推入的任务（支持移动语义）
+		 * @note 若队列已关闭，任务会被丢弃。
+		 */
+		void push(T task)
+		{
+			std::unique_lock<std::mutex> lock(mtx_);
+			cv_not_full_.wait(lock, [this]()
+			{
+				return queue_.size() < capacity_ || !is_running_.load();
+			});
+			if (!is_running_.load()) return;
+			queue_.push(std::move(task));
+			lock.unlock();
+			cv_not_empty_.notify_one();
+		}
+
+		/**
+		 * @brief 出队一个任务，若队列空则阻塞。
+		 * @param task 输出参数，接收元素
+		 * @return true 成功取出，false 队列已关闭且为空
+		 */
+		bool pop(T& task)
+		{
+			std::unique_lock<std::mutex> lock(mtx_);
+			cv_not_empty_.wait(lock, [this]()
+			{
+				return !queue_.empty() || !is_running_.load();
+			});
+			if (!is_running_.load() && queue_.empty()) return false;
+			task = std::move(queue_.front());
+			queue_.pop();
+			lock.unlock();
+			cv_not_full_.notify_one();
+			return true;
+		}
+
+		size_t size() const
+		{
+			std::lock_guard<std::mutex> lock(mtx_);
+			return queue_.size();
+		}
 };
 
-class PipelineManager {
-private:
-    SafeQueue<RawTask>  queue_raw_;
-    SafeQueue<NpuTask>  queue_npu_;
-    SafeQueue<PostTask> queue_post_;
-    std::vector<std::thread> workers_pre_;
-    std::vector<std::thread> workers_npu_;
-    std::vector<std::thread> workers_post_;
-    bool is_running_;
-    std::string model_path_;
+// ============================================================================
+// PipelineManager
+// ============================================================================
+/**
+ * @brief 三级流水线管理器（预处理 → NPU推理 → 后处理/视频输出）。
+ *
+ * 采用有界队列解耦各阶段，支持多线程并行。
+ * 视频输出按帧 ID 顺序写入，确保不会丢帧或乱序。
+ */
+class PipelineManager
+{
+	private:
+		BoundedSafeQueue<FrameBundlePtr> queue_raw_;
+		BoundedSafeQueue<FrameBundlePtr> queue_npu_;
+		BoundedSafeQueue<FrameBundlePtr> queue_post_;
 
-    // ==========================================
-    // 🌟 视频保存与乱序重排专用组件
-    // ==========================================
-    cv::VideoWriter video_writer_;        // OpenCV 视频写入器
-    std::map<int, cv::Mat> frame_buffer_; // 存放乱序到达的帧
-    int next_write_frame_id_ = 0;         // 记录当前应该写入视频的正确帧号
-    std::mutex writer_mtx_;               // 写入锁
+		std::vector<std::thread> workers_pre_;
+		std::vector<std::thread> workers_npu_;
+		std::vector<std::thread> workers_post_;
 
-    void worker_preprocess();
-    void worker_npu_infer(int core_id);
-    void worker_postprocess();
-public:
-    PipelineManager(int num_pre, int num_npu, int num_post, const std::string& model_path);
-    ~PipelineManager();
-    void push_image(int frame_id, const cv::Mat& img);
+		std::atomic<bool> is_running_{true};
+		std::string       model_path_;
+		int               num_npu_workers_;
+		float             conf_thres_ = 0.45f;
+		rknn_core_mask    npu_mask_;          // NPU核心掩码
+
+		// 视频输出（延迟初始化）
+		std::string       video_output_path_;
+		double            video_fps_ = 30.0;
+		bool              video_initialized_ = false;
+		cv::VideoWriter   video_writer_;
+		std::map<int, FrameBundlePtr> frame_buffer_;   // 缓存未按序写入的帧
+		int               next_write_frame_id_ = 0;     // 期望写入的下一个帧 ID
+		std::mutex        writer_mtx_;
+		std::atomic<bool> video_flushed_{false};
+
+		// 性能统计
+		std::atomic<int64_t> frames_completed_{0};
+		std::atomic<int64_t> total_pre_us_{0};
+		std::atomic<int64_t> total_npu_us_{0};
+		std::atomic<int64_t> total_post_us_{0};
+
+		// 性能统计 ② :: fps
+		std::chrono::steady_clock::time_point start_time_;
+		bool started_ = false;
+
+		// function
+		void worker_preprocess();
+		void worker_npu_infer(int core_id);
+		void worker_postprocess();
+		void flush_video_buffer();  // 析构时强制写入所有缓存帧
+
+	public:
+		/**
+		 * @brief 构造流水线管理器。
+		 * @param num_pre    预处理线程数
+		 * @param num_npu    NPU推理线程数（每个线程独立加载模型）
+		 * @param num_post   后处理线程数
+		 * @param model_path RKNN 模型文件路径
+		 * @param queue_cap  各队列容量
+		 * @param conf_thres 检测置信度阈值
+		 * @param npu_mask   NPU 核心掩码（多核分配策略）
+		 */
+		PipelineManager(int num_pre, int num_npu, int num_post,
+		                const std::string& model_path,
+		                size_t queue_cap = 16,
+		                float conf_thres = 0.45f,
+		                rknn_core_mask npu_mask = RKNN_NPU_CORE_AUTO);
+		~PipelineManager();
+
+		/**
+		 * @brief 输入 DMA 帧（零拷贝路径）。
+		 * @param frame_id  帧序号（用于输出排序）
+		 * @param src_buf   DMA 缓冲（来自 V4L2 或桥接）
+		 * @param orig_img  原始图像（用于画框，可为空）
+		 */
+		void push_dma_frame(int frame_id, const DmaBufferPtr& src_buf, const cv::Mat& orig_img = cv::Mat());
+
+		/**
+		 * @brief 输入 cv::Mat 图像（兼容路径，内部会转为 DMA）。
+		 * @param frame_id  帧序号
+		 * @param img       输入图像（BGR）
+		 */
+		void push_image(int frame_id, const cv::Mat& img);
+
+		/**
+		 * @brief 设置输出视频文件路径。
+		 * @param path 输出文件路径（如 .mp4）
+		 * @param fps  输出帧率
+		 */
+		void set_video_output(const std::string& path, double fps = 30.0);
+
+		/** @brief 等待所有队列处理完毕（用于优雅退出）。 */
+		void wait_idle();
+
+		/** @brief 打印性能汇总（平均耗时、总 FPS）。 */
+		void print_perf_summary();
 };
