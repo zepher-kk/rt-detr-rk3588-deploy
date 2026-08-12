@@ -175,6 +175,17 @@ class PipelineManager
 		void push_image(int frame_id, const cv::Mat& img);
 
 		/**
+		 * @brief 同步单帧图片检测（图片输入模式）。
+		 *
+		 * 内部完成 cv::Mat → DMA 桥接、RGA 预处理、NPU 推理、后处理画框，
+		 * 不经过线程池队列，便于单张图片端到端测时延。
+		 * @param src 输入图片（BGR）
+		 * @param out 输出图片（绘制检测框与类别标签）
+		 * @return true 成功；false 输入为空/模型不可用/推理失败
+		 */
+		bool detect_image(const cv::Mat& src, cv::Mat& out);
+
+		/**
 		 * @brief 设置输出视频文件路径。
 		 * @param path 输出文件路径（如 .mp4）
 		 * @param fps  输出帧率

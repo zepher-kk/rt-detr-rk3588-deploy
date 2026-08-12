@@ -11,6 +11,7 @@
 #include <iostream>
 #include <chrono>
 #include <errno.h>
+#include "logger.h"
 
 // ============================================================================
 // RGA 格式常量（来自 rga.h）
@@ -52,7 +53,7 @@ int get_drm_fd()
 			uint64_t has_dumb = 0;
 			if (drmGetCap(g_drm_fd, DRM_CAP_DUMB_BUFFER, &has_dumb) == 0 && has_dumb)
 			{
-				std::cerr << "[DRM] Opened " << paths[i]
+				LOG(MOD_DRM, LOG_INFO) << "Opened " << paths[i]
 				          << " fd=" << g_drm_fd << "\n";
 				return g_drm_fd;
 			}
@@ -61,8 +62,8 @@ int get_drm_fd()
 		}
 	}
 
-	std::cerr << "[DRM] FATAL: cannot open any /dev/dri/renderD12X or card0\n"
-	          << "[DRM] Please ensure:\n"
+	LOG(MOD_DRM, LOG_ERROR) << "FATAL: cannot open any /dev/dri/renderD12X or card0\n"
+	          << "Please ensure:\n"
 	          << "  1. Device is RK3588 with DRM support\n"
 	          << "  2. User has permission to access /dev/dri/*\n"
 	          << "  3. Run: sudo usermod -aG render $USER\n";
@@ -186,7 +187,7 @@ DmaBufferPool::DmaBufferPool(int width, int height, int format, size_t capacity)
 {
 	int bpp = rga_format_bpp(format);
 	stride_ = drm_aligned_stride(width, bpp);
-	std::cerr << "[DRM] Pool created: " << width << "x" << height
+	LOG(MOD_DRM, LOG_INFO) << "Pool created: " << width << "x" << height
 	          << " bpp=" << bpp << " stride=" << stride_
 	          << " capacity=" << capacity << "\n";
 }
@@ -221,7 +222,7 @@ bool DmaBufferPool::alloc_one_drm(DmaBuffer& out)
 
 	if (drmIoctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_req) < 0)
 	{
-		std::cerr << "[DRM] CREATE_DUMB failed: " << strerror(errno) << "\n";
+		LOG(MOD_DRM, LOG_ERROR) << "CREATE_DUMB failed: " << strerror(errno) << "\n";
 		return false;
 	}
 
@@ -232,7 +233,7 @@ bool DmaBufferPool::alloc_one_drm(DmaBuffer& out)
 
 	if (drmIoctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime_req) < 0)
 	{
-		std::cerr << "[DRM] PRIME_HANDLE_TO_FD failed: " << strerror(errno) << "\n";
+		LOG(MOD_DRM, LOG_ERROR) << "PRIME_HANDLE_TO_FD failed: " << strerror(errno) << "\n";
 		struct drm_mode_destroy_dumb destroy = {};
 		destroy.handle = create_req.handle;
 		drmIoctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
@@ -245,7 +246,7 @@ bool DmaBufferPool::alloc_one_drm(DmaBuffer& out)
 	map_req.handle = create_req.handle;
 	if (drmIoctl(drm_fd, DRM_IOCTL_MODE_MAP_DUMB, &map_req) < 0)
 	{
-		std::cerr << "[DRM] MAP_DUMB failed: " << strerror(errno) << "\n";
+		LOG(MOD_DRM, LOG_ERROR) << "MAP_DUMB failed: " << strerror(errno) << "\n";
 		close(prime_fd);
 		struct drm_mode_destroy_dumb destroy = {};
 		destroy.handle = create_req.handle;
@@ -258,7 +259,7 @@ bool DmaBufferPool::alloc_one_drm(DmaBuffer& out)
 	                     drm_fd, map_req.offset);
 	if (map_ptr == MAP_FAILED)
 	{
-		std::cerr << "[DRM] mmap failed: " << strerror(errno) << "\n";
+		LOG(MOD_DRM, LOG_ERROR) << "mmap failed: " << strerror(errno) << "\n";
 		close(prime_fd);
 		struct drm_mode_destroy_dumb destroy = {};
 		destroy.handle = create_req.handle;
@@ -278,7 +279,7 @@ bool DmaBufferPool::alloc_one_drm(DmaBuffer& out)
 	out.drm_fd  = drm_fd;
 
 	// 调试输出（可选）
-	std::cerr << "[DRM] Allocated: size=" << out.size << " stride=" << out.stride << "\n";
+	LOG(MOD_DRM, LOG_INFO) << "Allocated: size=" << out.size << " stride=" << out.stride << "\n";
 
 	return true;
 }

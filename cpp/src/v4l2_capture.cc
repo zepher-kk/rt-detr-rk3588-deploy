@@ -1,4 +1,5 @@
 #include "v4l2_capture.h"
+#include "logger.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -38,7 +39,7 @@ bool V4l2ZeroCopyCapture::open(const std::string& device,
 	fd_ = ::open(device.c_str(), O_RDWR | O_CLOEXEC);
 	if (fd_ < 0)
 	{
-		std::cerr << "[V4L2] Cannot open " << device << ": "
+		LOG(MOD_V4L2, LOG_ERROR) << "Cannot open " << device << ": "
 		          << strerror(errno) << "\n";
 		return false;
 	}
@@ -47,26 +48,26 @@ bool V4l2ZeroCopyCapture::open(const std::string& device,
 	struct v4l2_capability cap = {};
 	if (ioctl(fd_, VIDIOC_QUERYCAP, &cap) < 0)
 	{
-		std::cerr << "[V4L2] VIDIOC_QUERYCAP failed: " << strerror(errno) << "\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_QUERYCAP failed: " << strerror(errno) << "\n";
 		stop();
 		return false;
 	}
 
 	if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
 	{
-		std::cerr << "[V4L2] Device does not support video capture\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "Device does not support video capture\n";
 		stop();
 		return false;
 	}
 
 	if (!(cap.capabilities & V4L2_CAP_STREAMING))
 	{
-		std::cerr << "[V4L2] Device does not support streaming\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "Device does not support streaming\n";
 		stop();
 		return false;
 	}
 
-	std::cerr << "[V4L2] Device: " << cap.card
+	LOG(MOD_V4L2, LOG_INFO) << "Device: " << cap.card
 	          << " driver: " << cap.driver << "\n";
 
 	width_  = width;
@@ -100,7 +101,7 @@ bool V4l2ZeroCopyCapture::open(const std::string& device,
 		return false;
 	}
 
-	std::cerr << "[V4L2] Opened: " << width_ << "x" << height_
+	LOG(MOD_V4L2, LOG_INFO) << "Opened: " << width_ << "x" << height_
 	          << " stride=" << stride_
 	          << " buffers=" << mmap_buffers_.size() << "\n";
 
@@ -121,7 +122,7 @@ bool V4l2ZeroCopyCapture::negotiate_format()
 
 	if (ioctl(fd_, VIDIOC_S_FMT, &fmt) < 0)
 	{
-		std::cerr << "[V4L2] VIDIOC_S_FMT failed: " << strerror(errno) << "\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_S_FMT failed: " << strerror(errno) << "\n";
 		return false;
 	}
 
@@ -141,7 +142,7 @@ bool V4l2ZeroCopyCapture::negotiate_format()
 	}
 	else
 	{
-		std::cerr << "[V4L2] Unsupported format: "
+		LOG(MOD_V4L2, LOG_ERROR) << "Unsupported format: "
 		          << char(fmt.fmt.pix.pixelformat & 0xFF)
 		          << char((fmt.fmt.pix.pixelformat >> 8) & 0xFF)
 		          << char((fmt.fmt.pix.pixelformat >> 16) & 0xFF)
@@ -165,7 +166,7 @@ bool V4l2ZeroCopyCapture::request_mmap_buffers()
 
 	if (ioctl(fd_, VIDIOC_REQBUFS, &req) < 0)
 	{
-		std::cerr << "[V4L2] VIDIOC_REQBUFS failed: " << strerror(errno) << "\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_REQBUFS failed: " << strerror(errno) << "\n";
 		return false;
 	}
 
@@ -181,7 +182,7 @@ bool V4l2ZeroCopyCapture::request_mmap_buffers()
 
 		if (ioctl(fd_, VIDIOC_QUERYBUF, &buf) < 0)
 		{
-			std::cerr << "[V4L2] VIDIOC_QUERYBUF failed: " << strerror(errno) << "\n";
+			LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_QUERYBUF failed: " << strerror(errno) << "\n";
 			return false;
 		}
 
@@ -196,7 +197,7 @@ bool V4l2ZeroCopyCapture::request_mmap_buffers()
 		                              fd_, buf.m.offset);
 		if (mmap_buffers_[i].start == MAP_FAILED)
 		{
-			std::cerr << "[V4L2] mmap failed: " << strerror(errno) << "\n";
+			LOG(MOD_V4L2, LOG_ERROR) << "mmap failed: " << strerror(errno) << "\n";
 			return false;
 		}
 	}
@@ -219,7 +220,7 @@ bool V4l2ZeroCopyCapture::export_dma_fds()
 
 		if (ioctl(fd_, VIDIOC_EXPBUF, &expbuf) < 0)
 		{
-			std::cerr << "[V4L2] VIDIOC_EXPBUF failed: " << strerror(errno) << "\n";
+			LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_EXPBUF failed: " << strerror(errno) << "\n";
 			return false;
 		}
 
@@ -242,7 +243,7 @@ bool V4l2ZeroCopyCapture::start()
 		buf.index  = i;
 		if (ioctl(fd_, VIDIOC_QBUF, &buf) < 0)
 		{
-			std::cerr << "[V4L2] VIDIOC_QBUF failed: " << strerror(errno) << "\n";
+			LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_QBUF failed: " << strerror(errno) << "\n";
 			return false;
 		}
 	}
@@ -251,7 +252,7 @@ bool V4l2ZeroCopyCapture::start()
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	if (ioctl(fd_, VIDIOC_STREAMON, &type) < 0)
 	{
-		std::cerr << "[V4L2] VIDIOC_STREAMON failed: " << strerror(errno) << "\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_STREAMON failed: " << strerror(errno) << "\n";
 		return false;
 	}
 
@@ -284,14 +285,14 @@ DmaBufferPtr V4l2ZeroCopyCapture::read_frame()
 	if (ioctl(fd_, VIDIOC_DQBUF, &buf) < 0)
 	{
 		if (errno == EAGAIN) return nullptr;
-		std::cerr << "[V4L2] VIDIOC_DQBUF failed: " << strerror(errno) << "\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_DQBUF failed: " << strerror(errno) << "\n";
 		return nullptr;
 	}
 
 	int idx = buf.index;
 	if (idx < 0 || idx >= (int)mmap_buffers_.size())
 	{
-		std::cerr << "[V4L2] Invalid buffer index: " << idx << "\n";
+		LOG(MOD_V4L2, LOG_ERROR) << "Invalid buffer index: " << idx << "\n";
 		return nullptr;
 	}
 

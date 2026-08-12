@@ -138,7 +138,7 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 
 - 🧩 **端到端零拷贝数据通路 (Camera → RGA → NPU)**：新增 `DmaBufferPool`（DRM dumb buffer + PRIME fd + mmap，预分配循环复用），打通 **V4L2 摄像头 → RGA 预处理 → NPU 推理** 全链路，全程无 memcpy：
   - `V4l2ZeroCopyCapture`：V4L2 MMAP + EXPBUF 零拷贝采集，替代 OpenCV VideoCapture 摄像头路径；
-  - `RgaPreprocessor`：RGA `wrapbuffer_fd` DMA→DMA，单 pass `imresize_then_cvtcolor` 完成缩放 + BGR→RGB；
+  - `RgaPreprocessor`：RGA `wrapbuffer_fd` DMA→DMA，单 pass `imresize` + `imcvtcolor` 完成缩放 + BGR→RGB；
   - `RKNNDetector::infer_zero_copy`：`rknn_create_mem_from_fd` + `rknn_set_io_mem`，NPU 直接读取 DMA 缓冲。
   - 保留回退路径：视频文件 / OpenCV 摄像头 → cv::Mat → DMA 桥接（仅一次拷贝）。
 - ⚡ **预处理性能提升**（1080p→640p @30fps，代码注释基准）：OpenCV CPU `resize+cvtColor` 约 8ms/帧 / CPU 92% → RGA virt→DMA 约 1.5ms/帧 / CPU ~5% → **RGA DMA→DMA 约 0.8ms/帧 / CPU ~2%**。
@@ -146,7 +146,7 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 - 🎛️ **NPU 多核绑定**：`rknn_set_core_mask` + 新 CLI `--npu-cores auto|0|1|2|0,1|0,1,2`，配合多线程流水线按核心分配推理线程。
 - 🔧 **后处理 NEON SIMD 加速**：`decode_rtdetr_output` 集成 NEON，进一步降低 300 框解码耗时。
 - 🛠️ **构建与测试升级**：CMake 升级为 C++17 + `-O3`/OpenMP/NEON 编译选项，支持 `RK3588_TOOLCHAIN` 交叉编译，新增链接 `librga/libdrm/libv4l2/libv4lconvert`；可执行文件更名为 **`rtdetr_pipeline`**，新增单元测试 `test_unit` 与板端健壮性/压测脚本 `test_robustness.sh`。
-- 📦 **新增/重构源码模块**：新增 `drm_alloc`、`rga_utils`、`v4l2_capture`；重构 `npu_pipeline`、`rknn_detector`、`postprocess`、`types`、`main`。
+- 📦 **新增/重构源码模块**：新增 `drm_alloc`、`rga_utils`、`v4l2_capture`；重构 `npu_pipeline`、`rknn_detector`、`postprocess`、`types`、`main` 等。
 
 **V3 快速上手**：
 
@@ -156,11 +156,17 @@ mkdir -p build && cd build
 cmake .. && make -j4
 
 # 1. V4L2 摄像头零拷贝实时推理（3 个 NPU 线程 + 双核绑定示例）
-./rtdetr_pipeline -m /path/to/model.rknn -d /dev/video0 -W 1920 -H 1080 -n 3 --npu-cores 0,1
+./rtdetr_pipeline -m rtdetr_r18.rknn -d /dev/video0 -W 1920 -H 1080 -o output.mp4
 
-# 2. 视频文件推理（当前仍为 OpenCV 软解码 + DMA 桥接，MPP 硬解见 TODO）
-./rtdetr_pipeline -m /path/to/model.rknn -v test.mp4 -o out.mp4
+# 2. 视频文件推理[最佳性能]（当前仍为 OpenCV 软解码 + DMA 桥接，MPP 硬解见 TODO）
+./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4 -o result.mp4 -p 2 -n 14 -P 3 -c -0.13f  # 模型输出未归一化，阈值范围 > -1
 
-# 3. 查看完整帮助
+# 3. 处理单张图片
+./rtdetr_pipeline -m rtdetr_r18.rknn -i uav.jpg -o result_detect.jpg -c -0.13f
+
+# 4. 仅显示性能（不保存视频）
+./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4
+
+# 5. 查看完整帮助
 ./rtdetr_pipeline -h
 ```

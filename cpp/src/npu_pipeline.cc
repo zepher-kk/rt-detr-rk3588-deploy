@@ -2,10 +2,12 @@
 #include "rga_utils.h"
 #include "postprocess.h"
 #include "drm_alloc.h"
+#include "logger.h"
 
 #include <iostream>
 #include <chrono>
 #include <algorithm>
+#include <rga.h>
 
 static inline int64_t now_us()
 {
@@ -47,7 +49,7 @@ PipelineManager::PipelineManager(int num_pre, int num_npu, int num_post,
 	for (int i = 0; i < num_post; ++i)
 		workers_post_.emplace_back(&PipelineManager::worker_postprocess, this);
 
-	std::cerr << "[Pipeline] Started: pre=" << num_pre
+	LOG(MOD_PIPELINE, LOG_INFO) << "Started: pre=" << num_pre
 	          << " npu=" << num_npu
 	          << " post=" << num_post
 	          << " queue_cap=" << queue_cap
@@ -88,7 +90,7 @@ void PipelineManager::set_video_output(const std::string& path, double fps)
 	video_output_path_ = path;
 	video_fps_ = (fps > 0) ? fps : 30.0;
 	video_initialized_ = false;
-	std::cerr << "[Pipeline] Video output set to: " << path
+	LOG(MOD_PIPELINE, LOG_INFO) << "Video output set to: " << path
 	          << " @ " << video_fps_ << " fps\n";
 }
 
@@ -136,6 +138,55 @@ void PipelineManager::push_image(int frame_id, const cv::Mat& img)
 }
 
 // ============================================================================
+// 同步单帧图片检测（图片输入模式）
+// ============================================================================
+bool PipelineManager::detect_image(const cv::Mat& src, cv::Mat& out)
+{
+	if (src.empty())
+	{
+		LOG(MOD_PIPELINE, LOG_INFO) << "detect_image: empty input image\n";
+		return false;
+	}
+
+	// 1. cv::Mat → 640x640 RGB DMA（CPU resize+cvtColor 后紧致拷贝，
+	//    与原版一致；避免 RGA 源 stride 对齐污染问题）
+	DmaBufferPtr input_buf = rga_preprocessor().preprocess_mat_to_dma(src);
+	if (!input_buf)
+	{
+		LOG(MOD_PIPELINE, LOG_ERROR) << "detect_image: preprocess failed\n";
+		return false;
+	}
+
+	// 3. NPU 推理（独立 context，与视频 worker 互不影响）
+	RKNNDetector detector;
+	if (!detector.init(model_path_, npu_mask_))
+	{
+		LOG(MOD_PIPELINE, LOG_ERROR) << "detect_image: detector init failed\n";
+		return false;
+	}
+	std::vector<float> pred_boxes;
+	std::vector<float> pred_logits;
+	int num_boxes = 0;
+	int num_classes = 0;
+	if (!detector.infer_zero_copy(input_buf, pred_boxes, pred_logits, num_boxes, num_classes))
+	{
+		LOG(MOD_PIPELINE, LOG_ERROR) << "detect_image: inference failed\n";
+		return false;
+	}
+
+	// 4. 后处理解码 + 画框
+	std::vector<DetectResult> results = decode_rtdetr_output(
+	                                      pred_boxes.data(), pred_logits.data(),
+	                                      num_boxes, src.cols, src.rows,
+	                                      conf_thres_, num_classes);
+	out = src.clone();
+	draw_results(out, results);
+
+	LOG(MOD_PIPELINE, LOG_INFO) << "detect_image: " << results.size() << " targets\n";
+	return true;
+}
+
+// ============================================================================
 // 预处理 Worker（使用RGA零拷贝）
 // ============================================================================
 void PipelineManager::worker_preprocess()
@@ -158,13 +209,13 @@ void PipelineManager::worker_preprocess()
 		}
 		else
 		{
-			std::cerr << "[Pre] No valid source for frame " << bundle->frame_id << "\n";
+			LOGT(MOD_PIPELINE, LOG_ERROR, "Pre") << "No valid source for frame " << bundle->frame_id << "\n";
 			continue;
 		}
 
 		if (!bundle->input_buf)
 		{
-			std::cerr << "[Pre] RGA failed for frame " << bundle->frame_id << "\n";
+			LOGT(MOD_PIPELINE, LOG_ERROR, "Pre") << "RGA failed for frame " << bundle->frame_id << "\n";
 			continue;
 		}
 
@@ -182,7 +233,7 @@ void PipelineManager::worker_npu_infer(int /*core_id*/)
 	RKNNDetector detector;
 	if (!detector.init(model_path_, npu_mask_))
 	{
-		std::cerr << "[NPU] detector init failed with mask " << npu_mask_ << "\n";
+		LOGT(MOD_PIPELINE, LOG_ERROR, "NPU") << "detector init failed with mask " << npu_mask_ << "\n";
 		return;
 	}
 
@@ -203,7 +254,7 @@ void PipelineManager::worker_npu_infer(int /*core_id*/)
 
 		if (!ok)
 		{
-			std::cerr << "[NPU] infer failed for frame " << bundle->frame_id << "\n";
+			LOGT(MOD_PIPELINE, LOG_ERROR, "NPU") << "infer failed for frame " << bundle->frame_id << "\n";
 			continue;
 		}
 
@@ -259,7 +310,7 @@ void PipelineManager::worker_postprocess()
 				if (video_writer_.open(video_output_path_, fourcc, video_fps_, frame_size))
 				{
 					video_initialized_ = true;
-					std::cerr << "[Pipeline] VideoWriter opened: "
+					LOG(MOD_PIPELINE, LOG_INFO) << "VideoWriter opened: "
 					          << frame_size.width << "x" << frame_size.height
 					          << " @ " << video_fps_ << " fps\n";
 				}
@@ -268,7 +319,7 @@ void PipelineManager::worker_postprocess()
 					static bool warned = false;
 					if (!warned)
 					{
-						std::cerr << "[Pipeline] Failed to open video writer: " << video_output_path_ << "\n";
+						LOG(MOD_PIPELINE, LOG_ERROR) << "Failed to open video writer: " << video_output_path_ << "\n";
 						warned = true;
 					}
 				}
@@ -307,7 +358,7 @@ void PipelineManager::worker_postprocess()
 		if (frames_completed_ % 30 == 0)
 		{
 			int64_t n = frames_completed_.load();
-			std::cerr << "[Pipeline] frame=" << n
+			LOGR(MOD_PIPELINE) << "frame=" << n
 			          << " pre=" << (total_pre_us_.load() / n / 1000) << "ms"
 			          << " npu=" << (total_npu_us_.load() / n / 1000) << "ms"
 			          << " post=" << (total_post_us_.load() / n / 1000) << "ms"
@@ -319,7 +370,7 @@ void PipelineManager::worker_postprocess()
 				auto now = std::chrono::steady_clock::now();
 				double elapsed = std::chrono::duration<double>(now - start_time_).count();
 				double fps = n / elapsed;
-				std::cerr << "[Pipeline] FPS: " << fps << " (frames=" << n << ", elapsed=" << elapsed << "s)\n";
+				LOGR(MOD_PIPELINE) << "FPS: " << fps << " (frames=" << n << ", elapsed=" << elapsed << "s)\n";
 			}
 		}
 
@@ -343,11 +394,11 @@ void PipelineManager::flush_video_buffer()
 		if (video_writer_.open(video_output_path_, fourcc, video_fps_, frame_size))
 		{
 			video_initialized_ = true;
-			std::cerr << "[Pipeline] VideoWriter opened during flush.\n";
+			LOG(MOD_PIPELINE, LOG_INFO) << "VideoWriter opened during flush.\n";
 		}
 		else
 		{
-			std::cerr << "[Pipeline] Cannot open video writer during flush, dropping "
+			LOG(MOD_PIPELINE, LOG_ERROR) << "Cannot open video writer during flush, dropping "
 			          << frame_buffer_.size() << " frames.\n";
 			frame_buffer_.clear();
 			return;
@@ -378,7 +429,7 @@ void PipelineManager::flush_video_buffer()
 	size_t count = sorted_frames.size();
 	frame_buffer_.clear();
 	video_writer_.release();
-	std::cerr << "[Pipeline] Flushed " << count << " frames to video.\n";
+	LOG(MOD_PIPELINE, LOG_INFO) << "Flushed " << count << " frames to video.\n";
 }
 
 // ============================================================================
@@ -398,12 +449,13 @@ void PipelineManager::print_perf_summary()
 	double total_sec = std::chrono::duration<double>(now - start_time_).count();
 	double overall_fps = n / total_sec;
 
-	std::cerr << "\n========== Performance Summary ==========\n";
-	std::cerr << "Frames completed    : " << n << "\n";
-	std::cerr << "Total time (sec)    : " << total_sec << "\n";
-	std::cerr << "Overall FPS         : " << overall_fps << "\n";
-	std::cerr << "Avg preprocess      : " << (double)total_pre_us_.load() / n << " us\n";
-	std::cerr << "Avg NPU infer       : " << (double)total_npu_us_.load() / n << " us\n";
-	std::cerr << "Avg postprocess     : " << (double)total_post_us_.load() / n << " us\n";
-	std::cerr << "==========================================\n";
+	LogStream ls(MOD_PIPELINE, LOG_INFO, nullptr, true);
+	ls << "\n========== Performance Summary ==========\n";
+	ls << "Frames completed    : " << n << "\n";
+	ls << "Total time (sec)    : " << total_sec << "\n";
+	ls << "Overall FPS         : " << overall_fps << "\n";
+	ls << "Avg preprocess      : " << (double)total_pre_us_.load() / n << " us\n";
+	ls << "Avg NPU infer       : " << (double)total_npu_us_.load() / n << " us\n";
+	ls << "Avg postprocess     : " << (double)total_post_us_.load() / n << " us\n";
+	ls << "==========================================\n";
 }

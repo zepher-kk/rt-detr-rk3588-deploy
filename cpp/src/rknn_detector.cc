@@ -1,4 +1,5 @@
 #include "rknn_detector.h"
+#include "logger.h"
 #include "drm_alloc.h"
 
 #include <fstream>
@@ -15,7 +16,7 @@ unsigned char* RKNNDetector::load_model(const char* filename, int* model_size)
 	FILE* fp = fopen(filename, "rb");
 	if (!fp)
 	{
-		std::cerr << "[RKNN] Cannot open model: " << filename << "\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "Cannot open model: " << filename << "\n";
 		return nullptr;
 	}
 	fseek(fp, 0, SEEK_END);
@@ -63,12 +64,12 @@ bool RKNNDetector::query_io_attrs()
 	int ret = rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num));
 	if (ret < 0)
 	{
-		std::cerr << "[RKNN] query IN_OUT_NUM failed: " << ret << "\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "query IN_OUT_NUM failed: " << ret << "\n";
 		return false;
 	}
 	n_input_  = io_num.n_input;
 	n_output_ = io_num.n_output;
-	std::cerr << "[RKNN] n_input=" << n_input_ << " n_output=" << n_output_ << "\n";
+	LOG(MOD_RKNN, LOG_INFO) << "n_input=" << n_input_ << " n_output=" << n_output_ << "\n";
 
 	// 查询输入（仅第一个，用于后续零拷贝设置）
 	if (n_input_ > 0)
@@ -77,16 +78,18 @@ bool RKNNDetector::query_io_attrs()
 		int ret = rknn_query(ctx_, RKNN_QUERY_INPUT_ATTR, &input_attr_, sizeof(input_attr_));
 		if (ret == 0)
 		{
-			std::cerr << "[RKNN] input[0] dims=" << input_attr_.n_dims << " [";
+			LogStream ls(MOD_RKNN, LOG_INFO);
+			ls << "input[0] dims=" << input_attr_.n_dims << " [";
 			for (int d = 0; d < (int)input_attr_.n_dims; ++d)
 			{
-				std::cerr << input_attr_.dims[d] << (d + 1 < (int)input_attr_.n_dims ? "," : "");
+				ls << input_attr_.dims[d] << (d + 1 < (int)input_attr_.n_dims ? "," : "");
 			}
-			std::cerr << "] fmt=" << input_attr_.fmt << " type=" << input_attr_.type << "\n";
+			ls << "] fmt=" << input_attr_.fmt << " type=" << input_attr_.type << "\n";
 		}
 	}
 
-	// 遍历所有输出，通过名称识别 boxes 和 logits
+	// 遍历所有输出，通过形状识别 boxes 和 logits
+	// （与原版 rknn_rtdetr_demo 一致：boxes n_elems==300*4，logits n_elems==300*NUM_CLASSES，最后匹配者胜）
 	boxes_idx_ = -1;
 	logits_idx_ = -1;
 	for (int i = 0; i < n_output_; ++i)
@@ -96,66 +99,37 @@ bool RKNNDetector::query_io_attrs()
 		ret = rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr));
 		if (ret < 0)
 		{
-			std::cerr << "[RKNN] query output[" << i << "] failed: " << ret << "\n";
+			LOG(MOD_RKNN, LOG_ERROR) << "query output[" << i << "] failed: " << ret << "\n";
 			continue;
 		}
-		std::cerr << "[RKNN] output[" << i << "] n_elems=" << attr.n_elems
+		LOG(MOD_RKNN, LOG_INFO) << "output[" << i << "] n_elems=" << attr.n_elems
 		          << " type=" << attr.type << " fmt=" << attr.fmt
 		          << " scale=" << attr.scale << " zp=" << attr.zp
 		          << " name=" << attr.name << "\n";
 
-		std::string name(attr.name);
-		if (name == "pred_boxes")
+		// 与原版一致：按元素数精确匹配（300*4 / 300*NUM_CLASSES），最后匹配者胜
+		if (attr.n_elems == 300 * 4)
 		{
 			boxes_idx_ = i;
 			boxes_attr_ = attr;
 		}
-		else if (name == "pred_logits")
+		if (attr.n_elems == 300 * NUM_CLASSES)
 		{
 			logits_idx_ = i;
 			logits_attr_ = attr;
 		}
 	}
 
-	// 若名称匹配失败，则通过 n_elems 启发式识别（兼容老模型）
 	if (boxes_idx_ < 0 || logits_idx_ < 0)
 	{
-		std::cerr << "[RKNN] Name matching failed, fallback to n_elems heuristic\n";
-		for (int i = 0; i < n_output_; ++i)
-		{
-			rknn_tensor_attr attr;
-			attr.index = i;
-			rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr));
-			// 假设 boxes 具有 4 的倍数元素
-			if (attr.n_elems % 4 == 0 && attr.n_elems > 4)
-			{
-				// 可能的 boxes
-				if (boxes_idx_ < 0)
-				{
-					boxes_idx_ = i;
-					boxes_attr_ = attr;
-				}
-			}
-			// 假设 logits 的 n_elems 是 boxes 的 NUM_CLASSES 倍
-			// 更可靠：logits 的元素数通常大于 boxes
-			if (attr.n_elems > boxes_attr_.n_elems && attr.n_elems % 300 == 0)
-			{
-				logits_idx_ = i;
-				logits_attr_ = attr;
-			}
-		}
-	}
-
-	if (boxes_idx_ < 0 || logits_idx_ < 0)
-	{
-		std::cerr << "[RKNN] FATAL: cannot identify boxes/logits output\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "FATAL: cannot identify boxes/logits output\n";
 		return false;
 	}
 
 	// 从 logits 推断类别数(日志)
 	int detected_classes = logits_attr_.n_elems / 300;
-	std::cerr << "[RKNN] Detected num_classes from model = " << detected_classes
-	          << ", but forcing to " << NUM_CLASSES << " (as defined in types.h)\n";
+	LOG(MOD_RKNN, LOG_INFO) << "Detected num_classes from model = " << detected_classes
+	          << " (aligned with NUM_CLASSES=" << NUM_CLASSES << ")\n";
 
 	return true;
 }
@@ -169,14 +143,14 @@ bool RKNNDetector::init(const std::string& model_path, rknn_core_mask core_mask)
 	model_data_ = load_model(model_path.c_str(), &model_size);
 	if (!model_data_)
 	{
-		std::cerr << "[RKNN] load_model failed\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "load_model failed\n";
 		return false;
 	}
 
 	int ret = rknn_init(&ctx_, model_data_, model_size, 0, nullptr);
 	if (ret < 0)
 	{
-		std::cerr << "[RKNN] rknn_init failed: " << ret << "\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "rknn_init failed: " << ret << "\n";
 		return false;
 	}
 
@@ -186,17 +160,17 @@ bool RKNNDetector::init(const std::string& model_path, rknn_core_mask core_mask)
 		ret = rknn_set_core_mask(ctx_, core_mask);
 		if (ret < 0)
 		{
-			std::cerr << "[RKNN] rknn_set_core_mask failed: " << ret << "\n";
+			LOG(MOD_RKNN, LOG_ERROR) << "rknn_set_core_mask failed: " << ret << "\n";
 			// 不致命，继续
 		}
 		else
 		{
-			std::cerr << "[RKNN] Set core mask to " << core_mask << "\n";
+			LOG(MOD_RKNN, LOG_INFO) << "Set core mask to " << core_mask << "\n";
 		}
 	}
 	else
 	{
-		std::cerr << "[RKNN] Using auto NPU core selection\n";
+		LOG(MOD_RKNN, LOG_INFO) << "Using auto NPU core selection\n";
 	}
 
 	if (!query_io_attrs())
@@ -265,6 +239,7 @@ bool RKNNDetector::infer_zero_copy(const DmaBufferPtr& input_buf,
 		out_logits.assign(l_data, l_data + 300 * NUM_CLASSES);
 		num_boxes = 300;
 		num_classes = NUM_CLASSES;
+
 	}
 	else
 	{
@@ -286,7 +261,7 @@ bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img,
 {
 	if (!is_init_ || preprocessed_img.empty())
 	{
-		std::cerr << "[RKNN] infer_only: not initialized or empty image\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "infer_only: not initialized or empty image\n";
 		return false;
 	}
 
@@ -301,7 +276,7 @@ bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img,
 	inputs[0].pass_through = 0;
 	if (rknn_inputs_set(ctx_, 1, inputs) < 0)
 	{
-		std::cerr << "[RKNN] rknn_inputs_set failed\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "rknn_inputs_set failed\n";
 		return false;
 	}
 
@@ -309,7 +284,7 @@ bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img,
 	int ret = rknn_run(ctx_, nullptr);
 	if (ret < 0)
 	{
-		std::cerr << "[RKNN] rknn_run failed: " << ret << "\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "rknn_run failed: " << ret << "\n";
 		return false;
 	}
 
@@ -325,7 +300,7 @@ bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img,
 	ret = rknn_outputs_get(ctx_, n_output_, outputs.data(), nullptr);
 	if (ret < 0)
 	{
-		std::cerr << "[RKNN] rknn_outputs_get failed: " << ret << "\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "rknn_outputs_get failed: " << ret << "\n";
 		return false;
 	}
 
@@ -343,7 +318,7 @@ bool RKNNDetector::infer_only(const cv::Mat& preprocessed_img,
 	}
 	else
 	{
-		std::cerr << "[RKNN] No boxes/logits indices found\n";
+		LOG(MOD_RKNN, LOG_ERROR) << "No boxes/logits indices found\n";
 		ret = -1;
 	}
 
