@@ -3,6 +3,7 @@
 #include "rga_utils.h"
 #include "drm_alloc.h"
 #include "logger.h"
+#include "gst_io.h"
 
 #include <iostream>
 #include <chrono>
@@ -220,7 +221,23 @@ bool parse_args(int argc, char** argv, Args& args)
 // ============================================================================
 int run_image_mode(const Args& args, PipelineManager& pipeline)
 {
-	cv::Mat img = cv::imread(args.image_path, cv::IMREAD_COLOR);
+	// 任务 4：图片优先走 GStreamer MPP JPEG 硬解，失败回退 OpenCV 软解
+	cv::Mat img;
+	GstVideoReader gst_reader;
+	if (gst_reader.open(args.image_path))
+	{
+		if (!gst_reader.read(img))
+		{
+			LOG(MOD_MAIN, LOG_ERROR) << "GStreamer decode image failed: " << args.image_path << "\n";
+			gst_reader.release();
+			return 1;
+		}
+		gst_reader.release();
+	}
+	else
+	{
+		img = cv::imread(args.image_path, cv::IMREAD_COLOR);
+	}
 	if (img.empty())
 	{
 		LOG(MOD_MAIN, LOG_ERROR) << "Failed to load image: " << args.image_path << "\n";
@@ -301,35 +318,94 @@ int run_v4l2_mode(const Args& args, PipelineManager& pipeline)
 // ============================================================================
 int run_video_mode(const Args& args, PipelineManager& pipeline)
 {
-	// TODO: 后续使用 GStreamer + MPP 硬件解码替换 OpenCV 软解码，以降低 CPU 负载
-	cv::VideoCapture cap(args.video_path);
-	if (!cap.isOpened())
-	{
-		LOG(MOD_MAIN, LOG_ERROR) << "Failed to open video: " << args.video_path << "\n";
-		return 1;
-	}
-
-	// 读取实际帧率
-	double fps = cap.get(cv::CAP_PROP_FPS);
-	if (fps <= 0) fps = 30.0;
-
-	int actual_w = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
-	int actual_h = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-	LOG(MOD_MAIN, LOG_INFO) << "Video resolution: " << actual_w << "x" << actual_h << "\n";
-
-	if (!args.output_path.empty())
-	{
-		pipeline.set_video_output(args.output_path, fps);
-	}
-
+	// 任务 4：优先 GStreamer + RK MPP 硬件解码，失败回退 OpenCV 软解
+	GstVideoReader gst_reader;
+	bool use_gst = gst_reader.open(args.video_path);
+	cv::VideoCapture cap;
+	double fps = 30.0;
+	int actual_w = 0, actual_h = 0;
 	int frame_id = 0;
 	cv::Mat frame;
-	while (!g_should_exit && cap.read(frame))
+
+	if (use_gst)
 	{
-		// 与原版一致：cv::Mat 直接入队，worker 内完成 resize+cvtColor+紧致 DMA 拷贝
+		// 【任务 4 追加迭代】帧率来源：
+		// - 容器/caps 提供有效帧率（CFR）→ 直接使用；
+		// - VFR 或帧率元数据缺失（如 0/1）→ 两遍法：先纯解码统计容器时长/平均帧率
+		//   （MPP 硬解，555 帧约 2-3s），再正常处理。避免"取前两帧间隔"在 VFR 源上
+		//   误判（如 480×332 录屏前段 60fps burst → 输出 60fps → 时长 21.7s 被压成 9.2s）。
+		double fps_est = gst_reader.fps();
+		if (!gst_reader.caps_fps_authoritative())
+		{
+			GstVideoReader probe;
+			if (probe.open(args.video_path))
+			{
+				cv::Mat dummy;
+				while (probe.read(dummy)) {}
+				double avg = probe.measured_avg_fps();
+				probe.release();
+				if (avg >= 1.0 && avg <= 240.0)
+				{
+					fps_est = avg;
+					LOG(MOD_MAIN, LOG_INFO) << "VFR probe avg fps=" << fps_est << "\n";
+				}
+			}
+		}
+
+		// 硬解：先取首帧获取尺寸/帧率
+		if (!gst_reader.read(frame))
+		{
+			LOG(MOD_MAIN, LOG_ERROR) << "GStreamer read first frame failed: " << args.video_path << "\n";
+			gst_reader.release();
+			return 1;
+		}
+		cv::Mat frame2;
+		bool has_second = gst_reader.read(frame2);
+		fps = fps_est;
+		actual_w = frame.cols;
+		actual_h = frame.rows;
+		LOG(MOD_MAIN, LOG_INFO) << "GStreamer+MPP hardware decode: "
+		          << actual_w << "x" << actual_h << " @" << fps << "\n";
+		if (!args.output_path.empty())
+		{
+			pipeline.set_video_output(args.output_path, fps);
+		}
 		pipeline.push_image(frame_id++, frame);
+		if (has_second)
+		{
+			pipeline.push_image(frame_id++, frame2);
+			while (!g_should_exit && gst_reader.read(frame))
+			{
+				pipeline.push_image(frame_id++, frame);
+			}
+		}
+		gst_reader.release();
 	}
-	cap.release();
+	else
+	{
+		// 回退：OpenCV 软解
+		cap.open(args.video_path);
+		if (!cap.isOpened())
+		{
+			LOG(MOD_MAIN, LOG_ERROR) << "Failed to open video: " << args.video_path << "\n";
+			return 1;
+		}
+		fps = cap.get(cv::CAP_PROP_FPS);
+		if (fps <= 0) fps = 30.0;
+		actual_w = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
+		actual_h = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+		LOG(MOD_MAIN, LOG_WARN) << "GStreamer unavailable, fallback to OpenCV soft decode: "
+		          << actual_w << "x" << actual_h << "\n";
+		if (!args.output_path.empty())
+		{
+			pipeline.set_video_output(args.output_path, fps);
+		}
+		while (!g_should_exit && cap.read(frame))
+		{
+			pipeline.push_image(frame_id++, frame);
+		}
+		cap.release();
+	}
 	return 0;
 }
 

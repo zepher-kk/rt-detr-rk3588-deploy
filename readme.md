@@ -27,6 +27,7 @@
         * OpenCV (C++ 版，用于图像预处理/画框)
         * RKNPU2 驱动 (`librknnrt.so`)
         * librga / libdrm / libv4l2（V3 起 RGA_DMA 零拷贝通路依赖）
+        * GStreamer 1.x + rockchipmpp 插件（V3 起 MPP 硬件编解码依赖，`gst_io`）
 
 ---
 
@@ -80,9 +81,21 @@ cd cpp/
 mkdir build && cd build
 cmake ..
 make -j4
-make install  # 编译出的可执行文件会在 cpp/install 目录下
-运行方式：
-我们的 C++ 程序自带严谨的命令行解析器，极客范十足！！！
+# 可执行文件生成于 build/ 下：./rtdetr_pipeline（make install 会安装到 bin/）
+```
+
+> ⚠️ **V3 起使用方式已重构**：可执行文件更名为 `rtdetr_pipeline`，命令行参数全面变更（`-i` 图片 / `-v` 视频 / `-d` 摄像头 / `-G` 日志级别等）。V2 的 `rknn_rtdetr_demo` 与 `-s` / `-l` / `--pre` 等参数已废弃，**请以文末 V3 章节的用法为准**。
+
+运行方式（完整示例与参数说明见文末 V3 章节）：
+```bash
+# 1. 单张图片检测（JPEG 走 MPP 硬解，失败自动回退 OpenCV）
+./rtdetr_pipeline -m ../model/best.rknn -i ../img/uav.jpg -o result.jpg -c -0.13f
+
+# 2. 视频推理（GStreamer + MPP 硬解，输出 H.264 硬编）
+./rtdetr_pipeline -m ../model/best.rknn -v ../test.mp4 -o result.mp4 -p 2 -n 8 -P 3 -c -0.13f
+
+# 3. 查看帮助菜单
+./rtdetr_pipeline -h
 ```
 📊 5. 效果展示 (Results)
 🎯 检测精度与效果
@@ -102,7 +115,12 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 
 多线程的魅力：通过 C++ SafeQueue 解耦的流水线，使得读图、预处理、推理、解码各司其职，有效消灭了硬件闲置期。
 
-下一步优化 (TODO)：目前视频文件的解码与结果视频的编码仍依赖 CPU 端 OpenCV 软编解码。未来计划引入 **GStreamer + Rockchip MPP 硬件编解码 (gst_mpp)**，用硬件解码/编码替换 OpenCV 软解码/软编码，并与现有 RGA_DMA 零拷贝通路打通，实现采集—解码—预处理—推理—编码的全链路硬件加速。
+下一步优化 (TODO)：
+- 🔴 **NPU 推理耗时瓶颈（最高优先级，任务 6）**：INT8 模型单次推理约 500~560ms/帧，是当前整体 FPS 的主要瓶颈，待专项优化；
+- 预处理/后处理进一步提速（任务 5，暂缓，待 NPU 瓶颈处理后评估恢复）；
+- RGA 源缓冲 stride 对齐根治（建议改用 4 字节像素源缓冲，消除 3 字节非整除对齐的 CPU 回退路径）；
+- 相机 DMA→DMA 通路 stride 隐患复测与加固；
+- 板端 GStreamer 无 RGA 插件，NV12→BGR 可探索接入 librga `imcvtcolor`，进一步卸载 CPU。
 
 👉 更详细的技术内幕与原理解析，请移步博客：[你的CSDN或个人博客链接](https://blog.csdn.net/weixin_65585850?type=blog)
 
@@ -132,41 +150,72 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 
 ------
 
-### 🎉 V3 版本重大更新 (v3.0 Release Notes: RGA_DMA + NEON 集成加速优化)
+### 🎉 V3 版本重大更新 (v3.0 Release Notes: RGA_DMA 零拷贝 + GStreamer/MPP 全链路硬件加速)
 
-最新提交 (430aa1a) 为 cpp/ 带来了 **RGA_DMA 端到端零拷贝 + NEON SIMD** 集成加速优化，核心内容如下：
+> ⚠️ **重要**：V3 相对 V2 是**结构性重构**，不是简单增量——可执行文件、命令行参数与整条数据通路均已变更（V2 的 `rknn_rtdetr_demo`、`-s`、`-l`、`--pre` 等用法已废弃）。**cpp/ 的使用方式请以本文档 V3 章节为准。**
 
-- 🧩 **端到端零拷贝数据通路 (Camera → RGA → NPU)**：新增 `DmaBufferPool`（DRM dumb buffer + PRIME fd + mmap，预分配循环复用），打通 **V4L2 摄像头 → RGA 预处理 → NPU 推理** 全链路，全程无 memcpy：
-  - `V4l2ZeroCopyCapture`：V4L2 MMAP + EXPBUF 零拷贝采集，替代 OpenCV VideoCapture 摄像头路径；
-  - `RgaPreprocessor`：RGA `wrapbuffer_fd` DMA→DMA，单 pass `imresize` + `imcvtcolor` 完成缩放 + BGR→RGB；
-  - `RKNNDetector::infer_zero_copy`：`rknn_create_mem_from_fd` + `rknn_set_io_mem`，NPU 直接读取 DMA 缓冲。
-  - 保留回退路径：视频文件 / OpenCV 摄像头 → cv::Mat → DMA 桥接（仅一次拷贝）。
-- ⚡ **预处理性能提升**（1080p→640p @30fps，代码注释基准）：OpenCV CPU `resize+cvtColor` 约 8ms/帧 / CPU 92% → RGA virt→DMA 约 1.5ms/帧 / CPU ~5% → **RGA DMA→DMA 约 0.8ms/帧 / CPU ~2%**。
-- ⚡ **巅峰fps性能提升**：将近***<u>16fps</u>***（需要指令：-p 2 -n 14 -P 3，实现NPU 3核满载）
-- 🎛️ **NPU 多核绑定**：`rknn_set_core_mask` + 新 CLI `--npu-cores auto|0|1|2|0,1|0,1,2`，配合多线程流水线按核心分配推理线程。
-- 🔧 **后处理 NEON SIMD 加速**：`decode_rtdetr_output` 集成 NEON，进一步降低 300 框解码耗时。
-- 🛠️ **构建与测试升级**：CMake 升级为 C++17 + `-O3`/OpenMP/NEON 编译选项，支持 `RK3588_TOOLCHAIN` 交叉编译，新增链接 `librga/libdrm/libv4l2/libv4lconvert`；可执行文件更名为 **`rtdetr_pipeline`**，新增单元测试 `test_unit` 与板端健壮性/压测脚本 `test_robustness.sh`。
-- 📦 **新增/重构源码模块**：新增 `drm_alloc`、`rga_utils`、`v4l2_capture`；重构 `npu_pipeline`、`rknn_detector`、`postprocess`、`types`、`main` 等。
+#### V3 vs V2 主要差异
 
-**V3 快速上手**：
+| 维度 | V2 (`rknn_rtdetr_demo`) | V3 (`rtdetr_pipeline`) |
+|------|------------------------|------------------------|
+| 可执行文件 | `rknn_rtdetr_demo` | `rtdetr_pipeline` |
+| 输入方式 | `-s` 图片/视频 | `-i` 图片 / `-v` 视频 / `-d` V4L2 摄像头 |
+| 视频编解码 | OpenCV/FFmpeg 软解 + `mp4v` 软编 | GStreamer + RK MPP 硬解（H.264/H.265）/ H.264 硬编 |
+| 预处理 | OpenCV CPU `resize+cvtColor` | RGA 硬件加速（DMA→DMA / virt→DMA）+ stride 安全回退 |
+| 后处理 | 纯 C++ 解码 | NEON SIMD 加速 |
+| 日志 | 散落打印 | 模块化级联 logger（`-G` 0~8） |
+| 新增能力 | - | 图片模式、NPU 多核绑定、VFR 两遍法、健壮性熔断 |
+
+#### 核心更新内容
+
+- 🧩 **端到端零拷贝数据通路 (Camera → RGA → NPU)**：`DmaBufferPool`（DRM dumb buffer + PRIME fd + mmap，预分配循环复用）打通 V4L2 摄像头、RGA 预处理与 NPU 推理：
+  - `V4l2ZeroCopyCapture`：V4L2 MMAP + EXPBUF 零拷贝采集；
+  - `RgaPreprocessor`：RGA 硬件缩放 + BGR→RGB（DMA→DMA / virt→DMA 双路径，非对齐 stride 自动安全回退 CPU，杜绝逐行偏移污染）；
+  - `RKNNDetector::infer_zero_copy`：`rknn_create_mem_from_fd` + `rknn_set_io_mem` 零拷贝推理。
+- 🎬 **GStreamer + RK MPP 硬解/硬编（新增 `gst_io` 模块）**：
+  - 视频读取 `GstVideoReader`：qtdemux/avidemux/matroskademux/tsdemux → `mppvideodec` H.264/H.265 硬解，NV12 直拉 + OpenCV NEON `cvtColor` 转 BGR（规避 `videoconvert` ~60ms/帧瓶颈）；图片 JPEG 走 `mppjpegdec` 硬解，PNG/BMP/WebP 软解；
+  - 视频输出 `GstVideoWriter`：appsrc(BGR) → `mpph264enc` H.264 硬编 → mp4mux，替换 OpenCV `mp4v` 软编；
+  - 全部保留 OpenCV 回退（GStreamer 不可用时自动降级软解/软编）。
+- 🎞️ **编码质量与 VFR 修复**：appsrc 显式 `colorimetry=bt709`（对比度 std 41.3→47.5 完全恢复）+ 默认 **fixqp(qp22) + High profile** 恒质量编码；VFR 视频两遍法实测帧率（特殊 480×332@60 输出 26fps/21.31s，时长与源一致），CFR 视频零额外开销。
+- 🔧 **正确性与健壮性**：1080p 顶部绿条根治（`GstVideoMeta` 真实 offset/stride 组装 + `arm-afbc=false`）；RGA 并发调用互斥串行化（rga_fail=0）；NPU 初始化失败熔断 + `wait_idle()` 30s 上限 + 队列安全 shutdown，杜绝挂起。
+- 🛠️ **图片检测模式与日志系统**：新增 `-i/--image` 单图检测（JPEG 硬解优先）；`-G/--debug` 模块化级联日志（0=仅错误+报告，8=全部）。
+- ⚡ **NPU 多核绑定**：`rknn_set_core_mask` + `--npu-cores auto|0|1|2|0,1|0,1,2`，配合多线程流水线按核心分配推理线程。
+- 📦 **构建依赖**：CMake 新增 `gstreamer-1.0 / gstreamer-app-1.0 / gstreamer-video-1.0` 依赖（含 rockchipmpp 插件），其余同 V3 基础（C++17、-O3/OpenMP/NEON、`librga/libdrm/libv4l2`、`RK3588_TOOLCHAIN` 交叉编译）。
+
+#### 性能概述（板端 performance 模式实测）
+
+| 场景 | FPS | 平均 CPU | 峰值 RSS | 说明 |
+|------|-----|----------|----------|------|
+| 默认参数 `-p 2 -n 3 -P 1` | 8.55 | - | - | 基线 1（cars.mp4 720p@30） |
+| 最佳性能 `-p 2 -n 14 -P 3` | **~16.0** | ~394% | ~1650 MB | NPU 3 核满载（基线 2） |
+| 甜点位 `-p 2 -n 8 -P 3` | 15.61 | 365% | 953 MB | CPU -15% / 内存 -36% / FPS 仅 -3% |
+
+修复后全链路实测（`-p 2 -n 8 -P 3 -c -0.13f`）：特殊 480×332@60 → **16.23 FPS / 321% / 827MB**；cars.mp4 720p → **15.81 FPS / 332% / 954MB**；1080p → **15.37 FPS / 370% / 1152MB**。图片模式 uav.jpg 单图（含模型加载）约 **293ms**，检出 38 目标，与 V2 原版一致。单元测试 **22/22**（含 VFR 帧率估算、1080p 无绿条、模型加载失败不挂起等回归用例）。
+
+#### V3 快速上手（以 V3 为准）
 
 ```bash
 cd cpp/
 mkdir -p build && cd build
 cmake .. && make -j4
 
-# 1. V4L2 摄像头零拷贝实时推理（3 个 NPU 线程 + 双核绑定示例）
-./rtdetr_pipeline -m rtdetr_r18.rknn -d /dev/video0 -W 1920 -H 1080 -o output.mp4
+# 1. 单张图片检测（JPEG 走 MPP 硬解，失败自动回退 OpenCV）
+./rtdetr_pipeline -m rtdetr_r18.rknn -i uav.jpg -o result.jpg -c -0.13f
 
-# 2. 视频文件推理[最佳性能]（当前仍为 OpenCV 软解码 + DMA 桥接，MPP 硬解见 TODO）
-./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4 -o result.mp4 -p 2 -n 14 -P 3 -c -0.13f  # 模型输出未归一化，阈值范围 > -1
+# 2. 视频文件：MPP 硬解 + H.264 硬编 [最佳性能]
+./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4 -o result.mp4 -p 2 -n 14 -P 3 -c -0.13f
 
-# 3. 处理单张图片
-./rtdetr_pipeline -m rtdetr_r18.rknn -i uav.jpg -o result_detect.jpg -c -0.13f
+# 3. 视频文件 [CPU/内存甜点位]
+./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4 -o result.mp4 -p 2 -n 8 -P 3 -c -0.13f
 
-# 4. 仅显示性能（不保存视频）
-./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4
+# 4. V4L2 摄像头零拷贝实时推理
+./rtdetr_pipeline -m rtdetr_r18.rknn -d /dev/video0 -W 1920 -H 1080
 
-# 5. 查看完整帮助
+# 5. 仅性能测试 + 精简日志（-G 0 只输出错误与运行报告）
+./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4 -G 0
+
+# 6. 查看完整帮助
 ./rtdetr_pipeline -h
 ```
+
+> 模型输出未归一化，`-c` 阈值可取 > -1（如 `-0.13f`）；`-i` 与 `-v` 互斥；更多参数见 `./rtdetr_pipeline -h`。

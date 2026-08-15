@@ -58,6 +58,15 @@ PipelineManager::PipelineManager(int num_pre, int num_npu, int num_post,
 
 PipelineManager::~PipelineManager()
 {
+	// 【健壮性】NPU 全部初始化失败时，先关闭队列再投毒丸：
+	// 否则队列可能被未消费帧占满，析构的 push(nullptr) 会永久阻塞。
+	if (!workers_ok_.load())
+	{
+		queue_raw_.shutdown();
+		queue_npu_.shutdown();
+		queue_post_.shutdown();
+	}
+
 	// 1. 终止预处理
 	for (size_t i = 0; i < workers_pre_.size(); ++i)
 		queue_raw_.push(nullptr);
@@ -99,6 +108,8 @@ void PipelineManager::set_video_output(const std::string& path, double fps)
 // ============================================================================
 void PipelineManager::push_dma_frame(int frame_id, const DmaBufferPtr& src_buf, const cv::Mat& orig_img)
 {
+	// 【健壮性】NPU 不可用时快速丢帧，避免 reader 阻塞在满队列上无法退出
+	if (!workers_ok_.load()) return;
 
 	// fps_记录起始点_
 	if (!started_)
@@ -121,6 +132,8 @@ void PipelineManager::push_dma_frame(int frame_id, const DmaBufferPtr& src_buf, 
 
 void PipelineManager::push_image(int frame_id, const cv::Mat& img)
 {
+	// 【健壮性】NPU 不可用时快速丢帧，避免 reader 阻塞在满队列上无法退出
+	if (!workers_ok_.load()) return;
 
 	// fps_记录起始点_
 	if (!started_)
@@ -234,6 +247,8 @@ void PipelineManager::worker_npu_infer(int /*core_id*/)
 	if (!detector.init(model_path_, npu_mask_))
 	{
 		LOGT(MOD_PIPELINE, LOG_ERROR, "NPU") << "detector init failed with mask " << npu_mask_ << "\n";
+		npu_init_failures_++;
+		if (npu_init_failures_ >= num_npu_workers_) workers_ok_ = false;
 		return;
 	}
 
@@ -306,8 +321,7 @@ void PipelineManager::worker_postprocess()
 			if (!video_initialized_ && !bundle->orig_img.empty())
 			{
 				cv::Size frame_size = bundle->orig_img.size();
-				int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-				if (video_writer_.open(video_output_path_, fourcc, video_fps_, frame_size))
+				if (video_writer_.open(video_output_path_, video_fps_, frame_size))
 				{
 					video_initialized_ = true;
 					LOG(MOD_PIPELINE, LOG_INFO) << "VideoWriter opened: "
@@ -390,8 +404,7 @@ void PipelineManager::flush_video_buffer()
 	if (!video_initialized_ || !video_writer_.isOpened())
 	{
 		cv::Size frame_size = frame_buffer_.begin()->second->orig_img.size();
-		int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-		if (video_writer_.open(video_output_path_, fourcc, video_fps_, frame_size))
+		if (video_writer_.open(video_output_path_, video_fps_, frame_size))
 		{
 			video_initialized_ = true;
 			LOG(MOD_PIPELINE, LOG_INFO) << "VideoWriter opened during flush.\n";
@@ -437,8 +450,14 @@ void PipelineManager::flush_video_buffer()
 // ============================================================================
 void PipelineManager::wait_idle()
 {
-	while (queue_raw_.size() > 0 || queue_npu_.size() > 0 || queue_post_.size() > 0)
+	// 【健壮性】有界等待：30s 上限 + NPU 熔断时立即返回，杜绝永久挂起
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while (workers_ok_.load() &&
+	       (queue_raw_.size() > 0 || queue_npu_.size() > 0 || queue_post_.size() > 0))
+	{
+		if (std::chrono::steady_clock::now() > deadline) break;
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
 }
 
 void PipelineManager::print_perf_summary()

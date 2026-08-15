@@ -11,10 +11,13 @@
 #include "../include/postprocess.h"
 #include "../include/npu_pipeline.h"
 #include "../include/logger.h"
+#include "../include/gst_io.h"
 
 #include <iostream>
 #include <cassert>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <chrono>
 
 #include <rga.h>
@@ -418,8 +421,69 @@ void test_preprocess_mat_to_dma_correctness()
 	ASSERT_TRUE(out->width == 640 && out->height == 640, "输出尺寸错误");
 	ASSERT_TRUE(out->format == RK_FORMAT_RGB_888, "输出格式应为 RGB");
 
-	bool match = (memcmp(out->ptr, ref.data, ref.total() * ref.elemSize()) == 0);
-	ASSERT_TRUE(match, "输出与 CPU 参考不一致（stride 对齐污染回归）");
+	// RGA 插值与 OpenCV 插值非逐位一致，用平均绝对误差(MAE)判定正确性
+	const uint8_t* a = (const uint8_t*)out->ptr;
+	const uint8_t* b = ref.data;
+	const size_t n = ref.total() * ref.elemSize();
+	double sum = 0.0;
+	for (size_t k = 0; k < n; ++k)
+	{
+		sum += (a[k] >= b[k]) ? (a[k] - b[k]) : (b[k] - a[k]);
+	}
+	double mae = sum / n;
+	ASSERT_TRUE(mae < 3.0, "输出与 CPU 参考 MAE 过大（RGA/stride 污染回归）");
+	std::cout << "MAE=" << mae << " ";
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 15: preprocess_dma_to_dma stride 安全（模拟相机 DMA→DMA 非对齐宽度）
+// ============================================================================
+void test_dma_to_dma_stride_safe()
+{
+	TEST("preprocess_dma_to_dma stride 安全(1360宽)");
+
+	// 模拟 V4L2 相机 BGR24 帧：1360x765，DRM stride 可能为 4096（1360*3=4080 非对齐）
+	cv::Mat src(765, 1360, CV_8UC3);
+	for (int y = 0; y < src.rows; ++y)
+	{
+		src.row(y).setTo(cv::Scalar(y % 256, 0, 255));
+	}
+
+	DmaBufferPool pool(1360, 765, RK_FORMAT_BGR_888, 1);
+	DmaBufferPtr dma = pool.alloc();
+	ASSERT_TRUE(dma != nullptr, "DMA 分配失败");
+	LOG(MOD_TEST, LOG_INFO) << "simulated cam stride=" << dma->stride
+	          << " width*3=" << 1360 * 3 << "\n";
+
+	// 按实际 stride 逐行写入，模拟相机输出
+	uint8_t* drow = (uint8_t*)dma->ptr;
+	for (int y = 0; y < src.rows; ++y)
+	{
+		memcpy(drow, src.ptr<uint8_t>(y), 1360 * 3);
+		drow += dma->stride;
+	}
+
+	// CPU 参考
+	cv::Mat ref;
+	cv::resize(src, ref, cv::Size(640, 640));
+	cv::cvtColor(ref, ref, cv::COLOR_BGR2RGB);
+
+	RgaPreprocessor& pre = rga_preprocessor();
+	pre.init(2);
+	DmaBufferPtr out = pre.preprocess_dma_to_dma(dma);
+	ASSERT_TRUE(out != nullptr, "preprocess_dma_to_dma 失败");
+
+	const uint8_t* a = (const uint8_t*)out->ptr;
+	const uint8_t* b = ref.data;
+	const size_t n = ref.total() * ref.elemSize();
+	double sum = 0.0;
+	for (size_t k = 0; k < n; ++k)
+	{
+		sum += (a[k] >= b[k]) ? (a[k] - b[k]) : (b[k] - a[k]);
+	}
+	ASSERT_TRUE(sum / n < 3.0, "输出与 CPU 参考 MAE 过大（stride 污染）");
 
 	PASS();
 }
@@ -450,6 +514,187 @@ void test_logger_modules()
 }
 
 // ============================================================================
+// 测试 16: GStreamer MPP 硬件编码写入（uncle-bob：新代码配套测试）
+// ============================================================================
+void test_gst_video_writer()
+{
+	TEST("GstVideoWriter 硬编(H.264)");
+
+	const char* out_path = "/home/neardi/Workspace_Codex/rk3588_-rt-detr/cpp_DMSJ/build/ut_gst_out.mp4";
+	GstVideoWriter writer;
+	ASSERT_TRUE(writer.open(out_path, 30.0, cv::Size(320, 240)), "GstVideoWriter open 失败");
+
+	cv::Mat frame(240, 320, CV_8UC3, cv::Scalar(90, 140, 200));
+	for (int i = 0; i < 5; ++i)
+	{
+		ASSERT_TRUE(writer.write(frame), "GstVideoWriter write 失败");
+	}
+	writer.release();
+
+	FILE* fp = fopen(out_path, "rb");
+	ASSERT_TRUE(fp != nullptr, "输出文件不存在");
+	fseek(fp, 0, SEEK_END);
+	long sz = ftell(fp);
+	fclose(fp);
+	ASSERT_TRUE(sz > 0, "输出文件为空");
+	LOG(MOD_TEST, LOG_INFO) << "H.264 output size=" << sz << "\n";
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 17: GStreamer MPP 硬件解码读取
+// ============================================================================
+void test_gst_video_reader()
+{
+	TEST("GstVideoReader 硬解(cars_2s)");
+
+	GstVideoReader reader;
+	ASSERT_TRUE(reader.open("/home/neardi/Workspace_Codex/img/cars_2s.mp4"), "GstVideoReader open 失败");
+	cv::Mat frame;
+	int count = 0;
+	while (count < 10 && reader.read(frame))
+	{
+		ASSERT_TRUE(!frame.empty(), "读到空帧");
+		count++;
+	}
+	ASSERT_TRUE(count > 0, "未读到任何帧");
+	LOG(MOD_TEST, LOG_INFO) << "decoded frames=" << count
+	          << " fps=" << reader.fps()
+	          << " dims=" << frame.cols << "x" << frame.rows << "\n";
+	reader.release();
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 18: GStreamer MPP JPEG 硬解（图片输入）
+// ============================================================================
+void test_gst_image_decode()
+{
+	TEST("GstVideoReader JPEG 硬解(uav.jpg)");
+
+	GstVideoReader reader;
+	ASSERT_TRUE(reader.open("/home/neardi/Workspace_Codex/img/uav.jpg"), "JPEG open 失败");
+	cv::Mat frame;
+	ASSERT_TRUE(reader.read(frame), "JPEG 读帧失败");
+	LOG(MOD_TEST, LOG_INFO) << "JPEG dims=" << frame.cols << "x" << frame.rows << "\n";
+	ASSERT_TRUE(frame.cols == 1360, "宽度应为 1360");
+	ASSERT_TRUE(frame.rows >= 765 && frame.rows <= 768, "高度应为 765~768（硬件对齐）");
+	reader.release();
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 19: GStreamer 1080p 解码无顶部绿条（回归：高度对齐 1080→1088 的 UV 偏移）
+// ============================================================================
+void test_gst_1080p_no_green_bar()
+{
+	TEST("GstVideoReader 1080p 无顶部绿条");
+
+	GstVideoReader reader;
+	ASSERT_TRUE(reader.open("/home/neardi/Workspace_Codex/img/test_people_small_little_18s.mp4"),
+	            "1080p open 失败");
+	cv::Mat frame;
+	ASSERT_TRUE(reader.read(frame), "1080p 读帧失败");
+	ASSERT_TRUE(frame.cols == 1920 && frame.rows == 1080, "尺寸应为 1920x1080");
+
+	// 顶部 20 行绿色像素占比应 < 10%
+	int green = 0;
+	int total = 0;
+	for (int y = 0; y < 20; ++y)
+	{
+		for (int x = 0; x < frame.cols; ++x)
+		{
+			cv::Vec3b p = frame.at<cv::Vec3b>(y, x);
+			total++;
+			if (p[1] > 150 && p[0] < 100 && p[2] < 100) green++;
+		}
+	}
+	LOG(MOD_TEST, LOG_INFO) << "top20 green_ratio=" << (double)green / total << "\n";
+	ASSERT_TRUE((double)green / total < 0.1, "顶部出现绿色伪影（UV 偏移回归）");
+
+	reader.release();
+	PASS();
+}
+
+// ============================================================================
+// 测试 20: 多格式输入（AVI/H.264、MP4/H.265、图片）
+// ============================================================================
+void test_gst_multi_format()
+{
+	TEST("GstVideoReader 多格式(avi/hevc)");
+
+	const char* build = "/home/neardi/Workspace_Codex/rk3588_-rt-detr/cpp_DMSJ/build/";
+	std::string avi = std::string(build) + "ut_multi.avi";
+	std::string hevc = std::string(build) + "ut_multi_hevc.mp4";
+
+	// 用板端 mpp 编码器生成测试文件（不依赖外部素材）
+	std::string cmd_avi = "gst-launch-1.0 -q videotestsrc num-buffers=15 ! videoconvert "
+	                      "! video/x-raw,format=BGR,width=320,height=240 ! mpph264enc ! h264parse "
+	                      "! avimux ! filesink location=" + avi + " 2>/dev/null";
+	std::string cmd_hevc = "gst-launch-1.0 -q videotestsrc num-buffers=15 ! videoconvert "
+	                       "! video/x-raw,format=I420,width=320,height=240 ! mpph265enc ! h265parse "
+	                       "! mp4mux ! filesink location=" + hevc + " 2>/dev/null";
+	system(cmd_avi.c_str());
+	system(cmd_hevc.c_str());
+
+	GstVideoReader r1;
+	ASSERT_TRUE(r1.open(avi), "AVI(H.264) 打开失败");
+	cv::Mat f1;
+	ASSERT_TRUE(r1.read(f1) && !f1.empty(), "AVI 读帧失败");
+	r1.release();
+
+	GstVideoReader r2;
+	ASSERT_TRUE(r2.open(hevc), "HEVC(H.265) 打开失败");
+	cv::Mat f2;
+	ASSERT_TRUE(r2.read(f2) && !f2.empty(), "HEVC 读帧失败");
+	r2.release();
+
+	PASS();
+}
+
+// 测试 21: PipelineManager 模型加载失败不挂起（回归：NPU 初始化失败曾导致
+// reader 阻塞在满队列 / wait_idle 永久等待 / 析构 push 毒丸卡死）
+void test_pipeline_init_failure_no_hang()
+{
+	TEST("PipelineManager 模型加载失败不挂起");
+	auto t0 = steady_clock::now();
+	{
+		PipelineManager pipeline(1, 2, 1, "/nonexistent/model.rknn", 4);
+		cv::Mat f(480, 332, CV_8UC3, cv::Scalar(0, 0, 0));
+		for (int i = 0; i < 100; ++i) pipeline.push_image(i, f);
+		pipeline.wait_idle();
+		// 析构在作用域末尾执行
+	}
+	double sec = duration<double>(steady_clock::now() - t0).count();
+	ASSERT_TRUE(sec < 30.0, "模型加载失败仍挂起超过 30s");
+	PASS();
+}
+
+// 测试 22: GstVideoReader VFR 平均帧率估算（回归：480×332 录屏 caps framerate=0/1，
+// 前段 60fps burst 曾导致输出 60fps、时长 21.7s 被压成 9.2s）
+void test_gst_vfr_avg_fps()
+{
+	TEST("GstVideoReader VFR 平均帧率估算");
+	const char* vfr = "/home/neardi/Workspace_Codex/img/cars-from uav_Unconventional Size_.mp4";
+	GstVideoReader r;
+	ASSERT_TRUE(r.open(vfr), "VFR 视频打开失败");
+	ASSERT_TRUE(!r.caps_fps_authoritative(), "VFR 源不应有权威 caps 帧率");
+	cv::Mat f;
+	int n = 0;
+	while (r.read(f)) n++;
+	double avg = r.measured_avg_fps();
+	r.release();
+	ASSERT_TRUE(n > 300, "VFR 读帧数异常");
+	ASSERT_TRUE(avg >= 20.0 && avg <= 35.0,
+	            "VFR 实测平均帧率应约 25~27fps（容器时长/跨度），实际偏出");
+	std::cout << "frames=" << n << " avg_fps=" << avg << " ";
+	PASS();
+}
+
+// ============================================================================
 // 主函数
 // ============================================================================
 int main()
@@ -476,7 +721,15 @@ int main()
 	test_performance_benchmark();
 	test_detect_image_guard();
 	test_preprocess_mat_to_dma_correctness();
+	test_dma_to_dma_stride_safe();
 	test_logger_modules();
+	test_gst_video_writer();
+	test_gst_video_reader();
+	test_gst_image_decode();
+	test_gst_1080p_no_green_bar();
+	test_gst_multi_format();
+	test_pipeline_init_failure_no_hang();
+	test_gst_vfr_avg_fps();
 
 	std::cout << std::endl;
 	std::cout << "============================================" << std::endl;

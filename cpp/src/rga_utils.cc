@@ -4,9 +4,14 @@
 #include <iostream>
 #include <cstring>
 #include <chrono>
+#include <mutex>
 
 // 声明全局性能计数器（定义在 npu_pipeline.cc 中）
 extern PerfCounter g_perf;
+
+// RGA 调用互斥锁：librga 2.2 在并发调用（如 -p 2 预处理线程）下偶发
+// "RGA_BLIT fail: Invalid argument"，串行化 RGA 硬件调用可根治（pre 非瓶颈）。
+static std::mutex g_rga_mutex;
 
 // ============================================================================
 // RGA
@@ -69,6 +74,7 @@ DmaBufferPtr RgaPreprocessor::preprocess_dma_to_dma(const DmaBufferPtr& src_buf)
 		LOG(MOD_RGA, LOG_ERROR) << "preprocess_dma_to_dma: not initialized or null src\n";
 		return nullptr;
 	}
+	std::lock_guard<std::mutex> lock(g_rga_mutex);
 
 	DmaBufferPtr dst = dst_pool_->alloc();
 	if (!dst)
@@ -80,6 +86,13 @@ DmaBufferPtr RgaPreprocessor::preprocess_dma_to_dma(const DmaBufferPtr& src_buf)
 	rga_buffer_t src_rga = {};
 	rga_buffer_t dst_rga = {};
 	bool src_ok = false, dst_ok = false;
+
+	// 【任务 3 迭代 2】源有效 wstride = 实际 stride / bpp。
+	// 3 字节格式下 DRM 对齐 stride（如 1360 宽 → 4096，4080%3!=0）无法被 RGA wstride(像素) 表达，
+	// 此时 src_wstride=0，跳过 RGA 包装，走下方 CPU 回退，杜绝逐行偏移污染。
+	int src_bpp = rga_format_bpp(src_buf->format);
+	int src_wstride = (src_buf->stride > 0 && src_bpp > 0 && src_buf->stride % src_bpp == 0)
+	                  ? (int)(src_buf->stride / src_bpp) : 0;
 
 	// ---------- 尝试方法1: importbuffer_fd + wrapbuffer_handle_t 【目前不可行】----------
 	/*
@@ -98,36 +111,66 @@ DmaBufferPtr RgaPreprocessor::preprocess_dma_to_dma(const DmaBufferPtr& src_buf)
 	    }
 	*/
 
-	// ---------- 尝试方法2: wrapbuffer_fd_t (直接调用C函数) ----------
-	if (!src_ok)
+	// ---------- 尝试方法2: wrapbuffer_fd_t（wstride 用实际 stride，避免对齐污染）----------
+	if (src_wstride > 0 && !src_ok)
 	{
 		src_rga = wrapbuffer_fd_t(src_buf->fd, src_buf->width, src_buf->height,
-		                          src_buf->width, src_buf->height,  // wstride=width, hstride=height
+		                          src_wstride, src_buf->height,  // wstride=实际像素行宽
 		                          src_buf->format);
 		if (src_rga.vir_addr != nullptr || src_rga.fd > 0)
 		{
 			src_ok = true;
-			// std::cerr << "[RGA] Method2 src OK\n";
 		}
 	}
 
 	// ---------- 尝试方法3: wrapbuffer_virtualaddr (备选) ----------
-	if (!src_ok)
+	if (src_wstride > 0 && !src_ok)
 	{
 		src_rga = wrapbuffer_virtualaddr_t(src_buf->ptr, src_buf->width, src_buf->height,
-		                                   src_buf->width, src_buf->height,
+		                                   src_wstride, src_buf->height,
 		                                   src_buf->format);
 		if (src_rga.vir_addr != nullptr)
 		{
 			src_ok = true;
-			LOG(MOD_RGA, LOG_INFO) << "Method3 src OK\n";
 		}
 	}
 
 	if (!src_ok)
 	{
-		LOG(MOD_RGA, LOG_ERROR) << "All src wrapping methods failed\n";
-		return nullptr;
+		// 【任务 3 迭代 2】安全回退：CPU 按实际 stride 逐行读取 DMA 内存完成 resize+cvtColor。
+		// 适用：源 stride 与 width*bpp 不对齐的相机 DMA→DMA 通路（如 1360 宽 BGR → stride 4096）。
+		if (src_buf->format != RK_FORMAT_BGR_888 && src_buf->format != RK_FORMAT_RGB_888)
+		{
+			LOG(MOD_RGA, LOG_ERROR) << "CPU fallback only supports BGR/RGB 888 src, format="
+			          << src_buf->format << "\n";
+			return nullptr;
+		}
+		cv::Mat src_mat(src_buf->height, src_buf->width, CV_8UC3);
+		uint8_t* mrow = src_mat.data;
+		const uint8_t* srow = (const uint8_t*)src_buf->ptr;
+		const size_t row_bytes = (size_t)src_buf->width * 3;
+		for (int y = 0; y < src_buf->height; ++y)
+		{
+			memcpy(mrow, srow, row_bytes);
+			mrow += src_mat.step;
+			srow += src_buf->stride;
+		}
+		cv::resize(src_mat, src_mat, cv::Size(INPUT_WIDTH, INPUT_HEIGHT));
+		if (src_buf->format == RK_FORMAT_BGR_888)
+		{
+			cv::cvtColor(src_mat, src_mat, cv::COLOR_BGR2RGB);
+		}
+		uint8_t* d = (uint8_t*)dst->ptr;
+		const uint8_t* s = src_mat.data;
+		for (int y = 0; y < INPUT_HEIGHT; ++y)
+		{
+			memcpy(d, s, INPUT_WIDTH * 3);
+			d += dst->stride;
+			s += src_mat.step;
+		}
+		dst->format = RK_FORMAT_RGB_888;
+		g_perf.total_virt_to_dma++;
+		return dst;
 	}
 
 	// ---------- 目标 buffer 同样尝试三种方法 ----------
@@ -215,12 +258,46 @@ DmaBufferPtr RgaPreprocessor::preprocess_mat_to_dma(const cv::Mat& src)
 		return nullptr;
 	}
 
-	// 【正确性修复】与原版 rknn_rtdetr_demo 对齐：
-	// 先 CPU resize + BGR→RGB，再紧致写入 640x640 DMA（stride=1920 == 640*3）。
-	// 原因：DRM 源缓冲 stride 会对齐（如 1360 宽 → 4096），而 RGA wrapbuffer 的
-	// wstride=width 无法表达 3 字节像素的非整除 stride，导致非对齐宽度输入
-	// （uav.jpg 1360 宽、录屏 480 宽等）图像被逐行偏移污染 → 检测失效。
-	// 640x640 目标 stride=1920 与 wstride 严格一致，NPU 零拷贝输入不受影响。
+	// 【任务 3 优化】首选 RGA virt→DMA 硬件路径：
+	//   源 = cv::Mat 用户态连续内存（紧致 stride=width*3，RGA wstride 可精确表达），
+	//   目标 = 640x640 RGB DMA（stride=1920 == 640*3）。
+	//   消除 CPU resize/cvtColor 与 Mat→DMA 桥接 memcpy，降低 CPU 占用；
+	//   同时规避 DRM 源缓冲 stride 对齐污染问题（非对齐宽度如 1360→4096）。
+	if (src.isContinuous())
+	{
+		std::lock_guard<std::mutex> lock(g_rga_mutex);
+		DmaBufferPtr dst = dst_pool_->alloc();
+		if (dst)
+		{
+			rga_buffer_t src_rga = wrapbuffer_virtualaddr_t((void*)src.data, src.cols, src.rows,
+			                                                src.cols, src.rows, RK_FORMAT_BGR_888);
+			rga_buffer_t dst_rga = wrapbuffer_fd_t(dst->fd, INPUT_WIDTH, INPUT_HEIGHT,
+			                                       INPUT_WIDTH, INPUT_HEIGHT, RK_FORMAT_BGR_888);
+			if (src_rga.vir_addr != nullptr && dst_rga.fd > 0)
+			{
+				IM_STATUS st = imresize(src_rga, dst_rga);
+				if (st == IM_STATUS_SUCCESS)
+				{
+					st = imcvtcolor(dst_rga, dst_rga, RK_FORMAT_BGR_888, RK_FORMAT_RGB_888);
+					if (st == IM_STATUS_SUCCESS)
+					{
+						dst->format = RK_FORMAT_RGB_888;
+						g_perf.total_virt_to_dma++;
+						return dst;
+					}
+				}
+			}
+			static bool rga_virt_warned = false;
+			if (!rga_virt_warned)
+			{
+				LOG(MOD_RGA, LOG_WARN) << "RGA virt→DMA failed, fallback to CPU path\n";
+				rga_virt_warned = true;
+			}
+			dst.reset();
+		}
+	}
+
+	// 回退路径：CPU resize + BGR→RGB 后紧致写入 640x640 DMA（stride 安全）
 	cv::Mat resized;
 	cv::resize(src, resized, cv::Size(INPUT_WIDTH, INPUT_HEIGHT));
 	cv::cvtColor(resized, resized, cv::COLOR_BGR2RGB);

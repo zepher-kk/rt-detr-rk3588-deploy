@@ -14,6 +14,7 @@
 #include "types.h"
 #include "rknn_detector.h"
 #include "rknn_api.h"
+#include "gst_io.h"
 
 // ============================================================================
 // BoundedSafeQueue（有界阻塞队列）
@@ -110,6 +111,9 @@ class PipelineManager
 		std::vector<std::thread> workers_post_;
 
 		std::atomic<bool> is_running_{true};
+		// 【健壮性】NPU worker 初始化失败熔断：全部失败时输入直接丢帧，避免队列卡死
+		std::atomic<bool> workers_ok_{true};
+		std::atomic<int>  npu_init_failures_{0};
 		std::string       model_path_;
 		int               num_npu_workers_;
 		float             conf_thres_ = 0.45f;
@@ -119,7 +123,7 @@ class PipelineManager
 		std::string       video_output_path_;
 		double            video_fps_ = 30.0;
 		bool              video_initialized_ = false;
-		cv::VideoWriter   video_writer_;
+		GstVideoWriter    video_writer_;
 		std::map<int, FrameBundlePtr> frame_buffer_;   // 缓存未按序写入的帧
 		int               next_write_frame_id_ = 0;     // 期望写入的下一个帧 ID
 		std::mutex        writer_mtx_;

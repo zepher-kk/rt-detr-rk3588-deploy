@@ -49,12 +49,20 @@ set(RGA_LIB_DIR "/usr/lib/aarch64-linux-gnu" CACHE PATH "RGA lib dir")
 find_package(OpenCV REQUIRED)
 
 # ============================================================================
+# GStreamer（任务 4：RK MPP 硬解/硬编）
+# ============================================================================
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0)
+link_directories(${GST_LIBRARY_DIRS})
+
+# ============================================================================
 # 头文件搜索路径
 # ============================================================================
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${RGA_INCLUDE_DIR}
     ${RKNN_RT_LIB_DIR}
+    ${GST_INCLUDE_DIRS}
     /usr/include/libdrm
 )
 
@@ -68,6 +76,7 @@ set(SOURCES
     src/rknn_detector.cc
     src/postprocess.cc
     src/npu_pipeline.cc
+    src/gst_io.cc
     src/main.cc
 )
 
@@ -86,6 +95,7 @@ target_link_libraries(rtdetr_pipeline
     v4l2
     v4lconvert
     ${OpenCV_LIBS}
+    ${GST_LIBRARIES}
     gomp
     pthread
     dl
@@ -103,6 +113,7 @@ add_executable(test_unit
     src/rknn_detector.cc
     src/postprocess.cc
     src/npu_pipeline.cc
+    src/gst_io.cc
 )
 
 target_link_libraries(test_unit
@@ -112,6 +123,7 @@ target_link_libraries(test_unit
     v4l2
     v4lconvert
     ${OpenCV_LIBS}
+    ${GST_LIBRARIES}
     gomp
     pthread
     dl
