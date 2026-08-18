@@ -4,10 +4,11 @@
 #include <opencv2/opencv.hpp>
 
 // ============================================================================
-// gst_io.h - GStreamer + Rockchip MPP 硬解/硬编封装（任务 4）
+// gst_io.h - GStreamer + Rockchip MPP 硬件编解码封装
 //
-// GstVideoReader：filesrc → qtdemux → h264parse → mppvideodec → videoconvert
-//                 → BGR → appsink（硬件解码，替代 OpenCV/FFmpeg 软解）
+// GstVideoReader：filesrc → demux → (h264/h265)parse → mppvideodec → appsink
+//                 硬解输出 NV12 后由调用方转 BGR（规避 videoconvert 高 CPU 开销）；
+//                 图片走 mppjpegdec 硬解，PNG/BMP/WebP 软解，失败回退 OpenCV
 // GstVideoWriter：appsrc(BGR) → mpph264enc → h264parse → mp4mux → filesink
 //                 （硬件 H.264 编码，替代 OpenCV mp4v 软编）
 // ============================================================================
@@ -37,7 +38,7 @@ class GstVideoReader
 		 */
 		bool caps_fps_authoritative() const;
 		/**
-		 * @brief 实测平均帧率（任务 4 追加迭代）：
+		 * @brief 实测平均帧率：
 		 * 优先容器时长（count/duration），否则 PTS 首尾跨度（(count-1)/span）。
 		 * 需先读完整段；无效返回 0。
 		 */
@@ -67,7 +68,7 @@ class GstVideoWriter
 		void          release();
 
 		/**
-		 * @brief 配置硬件编码器质量参数（任务 4 迭代 4）。
+		 * @brief 配置硬件编码器质量参数。
 		 * @param rc_mode  "fixqp"（固定 QP 质量优先）/ "vbr" / "cbr"
 		 * @param qp_init  rc_mode=fixqp 时的初始 QP（越小越清晰，建议 24~30）
 		 * @param profile  "high"（CABAC，推荐）/ "main" / "baseline"

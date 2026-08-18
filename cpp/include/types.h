@@ -80,13 +80,11 @@ using DmaBufferPtr = std::shared_ptr<DmaBuffer>;
 // ============================================================================
 // FrameBundle：贯穿三段流水线的帧数据包
 //
-// 设计要点（RGA_DMA 零拷贝核心）：
-//   1. src_buf：源 DMA buffer（来自 V4L2 MMAP 或 cv::Mat→DMA 桥接）
-//      - V4L2 模式：直接是摄像头输出的 DMA buffer，零拷贝
-//      - 视频文件模式：cv::Mat 解码后 memcpy 到 DMA buffer（仅此一次拷贝）
-//   2. input_buf：RGA 输出 DMA buffer（640x640 RGB），NPU 直接读取，零拷贝
-//   3. orig_img：保留 cv::Mat 引用用于后处理画框（浅拷贝，不占额外内存）
-//   4. 用 shared_ptr 在队列间传递，避免 cv::Mat clone 与 memcpy
+// 设计要点：
+//   1. src_buf：源 DMA buffer（V4L2 相机零拷贝路径），预处理完成后提前归还采集队列
+//   2. input_buf：RGA 输出 DMA buffer（640x640 RGB），NPU 直接零拷贝读取
+//   3. orig_img：源图像副本（入队时 clone），用于后处理画框与视频输出
+//   4. 帧包以 shared_ptr 在队列间传递，仅移动所有权，不复制图像数据
 // ============================================================================
 struct FrameBundle
 {

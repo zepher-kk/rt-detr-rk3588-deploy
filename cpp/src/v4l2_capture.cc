@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <poll.h>
 #include <linux/videodev2.h>
 #include <linux/dma-buf.h>
 #include <cstring>
@@ -22,6 +23,19 @@
 #ifndef V4L2_PIX_FMT_RGB24
 #define V4L2_PIX_FMT_RGB24 v4l2_fourcc('R', 'G', 'B', '3')
 #endif
+
+// 四字符码 → 可读字符串（用于日志）
+static std::string fourcc_to_string(__u32 f)
+{
+	char s[5] = {
+		(char)(f & 0xFF),
+		(char)((f >> 8) & 0xFF),
+		(char)((f >> 16) & 0xFF),
+		(char)((f >> 24) & 0xFF),
+		0
+	};
+	return std::string(s);
+}
 
 // ============================================================================
 // V4l2ZeroCopyCapture 实现
@@ -113,45 +127,49 @@ bool V4l2ZeroCopyCapture::open(const std::string& device,
 // ----------------------------------------------------------------------------
 bool V4l2ZeroCopyCapture::negotiate_format()
 {
-	struct v4l2_format fmt = {};
-	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	fmt.fmt.pix.width       = width_;
-	fmt.fmt.pix.height      = height_;
-	fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_BGR24;  // 优先 BGR3
-	fmt.fmt.pix.field       = V4L2_FIELD_NONE;
+	// USB 摄像头（如 /dev/video41 Web Camera）常见仅支持 MJPG/YUYV。
+	// 零拷贝通路只接受无需解码的格式：优先 BGR3/RGB3（24bpp），其次 YUYV
+	// （RGA 原生支持 YUYV→RGB，保持 DMA→DMA 零拷贝）；MJPG 等压缩格式由
+	// 驱动端完成解码后再走 OpenCV 回退模式，不在此协商。
+	const std::vector<__u32> candidates = {
+		V4L2_PIX_FMT_BGR24,
+		V4L2_PIX_FMT_RGB24,
+		V4L2_PIX_FMT_YUYV
+	};
 
-	if (ioctl(fd_, VIDIOC_S_FMT, &fmt) < 0)
+	for (__u32 want : candidates)
 	{
-		LOG(MOD_V4L2, LOG_ERROR) << "VIDIOC_S_FMT failed: " << strerror(errno) << "\n";
-		return false;
+		struct v4l2_format fmt = {};
+		fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+		fmt.fmt.pix.width       = width_;
+		fmt.fmt.pix.height      = height_;
+		fmt.fmt.pix.pixelformat = want;
+		fmt.fmt.pix.field       = V4L2_FIELD_NONE;
+
+		if (ioctl(fd_, VIDIOC_S_FMT, &fmt) < 0)
+			continue;   // 驱动不支持该格式，尝试下一个
+		if (fmt.fmt.pix.pixelformat != want)
+			continue;   // 驱动静默返回其它格式（如 UVC 回退 MJPG），视为未接受
+
+		width_  = fmt.fmt.pix.width;
+		height_ = fmt.fmt.pix.height;
+		stride_ = fmt.fmt.pix.bytesperline;
+
+		if (want == V4L2_PIX_FMT_BGR24)
+			format_ = RK_FORMAT_BGR_888;
+		else if (want == V4L2_PIX_FMT_RGB24)
+			format_ = RK_FORMAT_RGB_888;
+		else
+			format_ = RK_FORMAT_YUYV_422;
+
+		LOG(MOD_V4L2, LOG_INFO) << "Negotiated " << width_ << "x" << height_
+		          << " fourcc=" << fourcc_to_string(want)
+		          << " stride=" << stride_ << "\n";
+		return true;
 	}
 
-	// 检查实际协商结果
-	width_  = fmt.fmt.pix.width;
-	height_ = fmt.fmt.pix.height;
-	stride_ = fmt.fmt.pix.bytesperline;
-
-	// 映射 V4L2 格式到 RGA 格式
-	if (fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_BGR24)
-	{
-		format_ = RK_FORMAT_BGR_888;
-	}
-	else if (fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_RGB24)
-	{
-		format_ = RK_FORMAT_RGB_888;
-	}
-	else
-	{
-		LOG(MOD_V4L2, LOG_ERROR) << "Unsupported format: "
-		          << char(fmt.fmt.pix.pixelformat & 0xFF)
-		          << char((fmt.fmt.pix.pixelformat >> 8) & 0xFF)
-		          << char((fmt.fmt.pix.pixelformat >> 16) & 0xFF)
-		          << char((fmt.fmt.pix.pixelformat >> 24) & 0xFF)
-		          << "\n";
-		return false;
-	}
-
-	return true;
+	LOG(MOD_V4L2, LOG_ERROR) << "No supported format (need BGR3/RGB3/YUYV)\n";
+	return false;
 }
 
 // ----------------------------------------------------------------------------
@@ -278,6 +296,19 @@ DmaBufferPtr V4l2ZeroCopyCapture::read_frame()
 	}
 
 	// 取一帧
+	// 带超时等待帧就绪：SIGTERM/SIGINT 后 DQBUF 可能因 SA_RESTART
+	// 被自动重启而永久阻塞，导致摄像头模式无法优雅退出。poll 500ms 超时返回
+	// nullptr，让主循环有机会检查退出标志。
+	struct pollfd pfd = { fd_, POLLIN, 0 };
+	int pr = poll(&pfd, 1, 500);
+	if (pr < 0)
+	{
+		if (errno == EINTR) return nullptr;
+		LOG(MOD_V4L2, LOG_ERROR) << "poll failed: " << strerror(errno) << "\n";
+		return nullptr;
+	}
+	if (pr == 0) return nullptr;   // 500ms 无新帧（超时），调用方决定是否退出
+
 	struct v4l2_buffer buf = {};
 	buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	buf.memory = V4L2_MEMORY_MMAP;
@@ -308,9 +339,16 @@ DmaBufferPtr V4l2ZeroCopyCapture::read_frame()
 	raw->handle  = 0;  // V4L2 buffer 无 DRM handle
 	raw->drm_fd  = -1;
 
-	// 返回 shared_ptr，析构时归还 V4L2 buffer
+	// 返回 shared_ptr，析构时归还 V4L2 buffer。
+	// 注意：V4L2 的 mmap 与 EXPBUF fd 由本类（stop 时）统一管理，DmaBuffer 析构
+	// 前必须置空 ptr/fd/handle，避免提前 munmap/close 导致相机 buffer 失效
+	// （否则 4 个 buffer 用一轮后相机即停流，且退出时 double munmap/close）。
 	return DmaBufferPtr(raw, [this, idx](DmaBuffer* b)
 	{
+		b->ptr   = nullptr;
+		b->fd    = -1;
+		b->handle = 0;
+		b->drm_fd = -1;
 		delete b;
 		enqueue_recycle(idx);
 	});
@@ -321,6 +359,7 @@ DmaBufferPtr V4l2ZeroCopyCapture::read_frame()
 // ----------------------------------------------------------------------------
 void V4l2ZeroCopyCapture::enqueue_recycle(int v4l2_index)
 {
+	if (fd_ < 0) return;   // 已 stop：不再归还（deleter 可能晚于 stop 触发）
 	{
 		std::lock_guard<std::mutex> lock(recycle_mtx_);
 		recycle_queue_.push(v4l2_index);

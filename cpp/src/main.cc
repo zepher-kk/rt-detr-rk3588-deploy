@@ -43,6 +43,7 @@ struct Args
 	int  width      = 1920;
 	int  height     = 1080;
 	int  fps        = 30;
+	bool fps_set    = false;   // 用户是否显式指定 -F/--fps
 	int  pre_workers  = 2;
 	int  npu_workers  = 3;
 	int  post_workers = 1;
@@ -51,6 +52,7 @@ struct Args
 	int  debug        = -1;   // -G/--DEBUG：-1 表示未指定（默认全模块）
 	bool use_v4l2     = true;
 	bool show_fps     = true;
+	bool show_display = false;
 	rknn_core_mask npu_mask = RKNN_NPU_CORE_AUTO;
 };
 
@@ -67,7 +69,7 @@ void print_usage(const char* prog)
 	          << "  -d, --device <dev>      V4L2 device (default: /dev/video0)\n"
 	          << "  -W, --width <n>         Capture width (default: 1920, fallback)\n"
 	          << "  -H, --height <n>        Capture height (default: 1080, fallback)\n"
-	          << "  -F, --fps <n>           Capture fps (default: 30)\n"
+	          << "  -F, --fps <n>           Override input/output fps (video file & camera; default: auto/source)\n"
 	          << "  -o, --output <path>     Output video path (default: none)\n"
 	          << "  -c, --conf <f>          Confidence threshold (default: 0.45)\n"
 	          << "  -n, --npu-workers <n>   NPU workers (default: 3)\n"
@@ -76,6 +78,7 @@ void print_usage(const char* prog)
 	          << "  -q, --queue-cap <n>    Queue capacity (default: 16)\n"
 	          << "  --npu-cores <val>      NPU core mask: auto|0|1|2|0,1|0,1,2 (default: auto)\n"
 	          << "  --opencv                Use OpenCV camera (fallback)\n"
+	          << "  --display               Show real-time detection window (requires display)\n"
 	          << "  -G, --debug <n>        Log modules: 0=errors+report; 1=[Main]; 2=+[RKNN]; 3=+[Pipeline]; ... 8=all (default: all)\n"
 	          << "  -h, --help              Show this help\n";
 }
@@ -129,6 +132,7 @@ bool parse_args(int argc, char** argv, Args& args)
 		else if (arg == "-F" || arg == "--fps")
 		{
 			args.fps = std::stoi(get_val("fps"));
+			args.fps_set = true;
 		}
 		else if (arg == "-o" || arg == "--output")
 		{
@@ -191,6 +195,10 @@ bool parse_args(int argc, char** argv, Args& args)
 		{
 			args.use_v4l2 = false;
 		}
+		else if (arg == "--display")
+		{
+			args.show_display = true;
+		}
 		else if (arg == "-G" || arg == "--debug")
 		{
 			args.debug = std::stoi(get_val("debug"));
@@ -221,7 +229,7 @@ bool parse_args(int argc, char** argv, Args& args)
 // ============================================================================
 int run_image_mode(const Args& args, PipelineManager& pipeline)
 {
-	// 任务 4：图片优先走 GStreamer MPP JPEG 硬解，失败回退 OpenCV 软解
+	// 图片优先走 GStreamer MPP JPEG 硬解，失败回退 OpenCV 软解
 	cv::Mat img;
 	GstVideoReader gst_reader;
 	if (gst_reader.open(args.image_path))
@@ -268,9 +276,33 @@ int run_image_mode(const Args& args, PipelineManager& pipeline)
 // ============================================================================
 // V4L2 零拷贝摄像头模式
 // ============================================================================
-int run_v4l2_mode(const Args& args, PipelineManager& pipeline)
+// 将 V4L2 DMA 帧拷贝为 cv::Mat（用于画框/写视频；推理仍走 DMA 零拷贝路径）
+static void v4l2_dma_to_mat(const DmaBufferPtr& buf, cv::Mat& out)
 {
-	V4l2ZeroCopyCapture cap;
+	if (!buf) return;
+	out = cv::Mat();
+	if (buf->format == RK_FORMAT_YUYV_422)
+	{
+		cv::Mat yuyv(buf->height, buf->width, CV_8UC2, buf->ptr, buf->stride);
+		cv::cvtColor(yuyv, out, cv::COLOR_YUV2BGR_YUY2);
+	}
+	else if (buf->format == RK_FORMAT_BGR_888 || buf->format == RK_FORMAT_RGB_888)
+	{
+		out.create(buf->height, buf->width, CV_8UC3);
+		uint8_t* d = out.data;
+		const uint8_t* s = (const uint8_t*)buf->ptr;
+		for (int y = 0; y < buf->height; ++y)
+		{
+			memcpy(d, s, (size_t)buf->width * 3);
+			d += out.step;
+			s += buf->stride;
+		}
+	}
+}
+
+int run_v4l2_mode(const Args& args, PipelineManager& pipeline,
+                  V4l2ZeroCopyCapture& cap)
+{
 	if (!cap.open(args.device, args.width, args.height, args.fps))
 	{
 		LOG(MOD_MAIN, LOG_ERROR) << "Failed to open V4L2 device: " << args.device << "\n";
@@ -286,9 +318,9 @@ int run_v4l2_mode(const Args& args, PipelineManager& pipeline)
 	int actual_w = cap.width();
 	int actual_h = cap.height();
 	LOG(MOD_MAIN, LOG_INFO) << "V4L2 actual resolution: " << actual_w << "x" << actual_h << "\n";
-	rga_preprocessor().get_src_pool(actual_w, actual_h, RK_FORMAT_BGR_888);
+	rga_preprocessor().get_src_pool(actual_w, actual_h, cap.format());
 
-	// 如果指定了输出视频，设置输出（使用args.fps）
+	// 如果指定了输出视频，设置输出（使用 args.fps）
 	if (!args.output_path.empty())
 	{
 		pipeline.set_video_output(args.output_path, args.fps);
@@ -298,15 +330,25 @@ int run_v4l2_mode(const Args& args, PipelineManager& pipeline)
 	          << cap.width() << "x" << cap.height() << "\n";
 
 	int frame_id = 0;
+	int consecutive_empty = 0;
 	while (!g_should_exit)
 	{
 		DmaBufferPtr src_buf = cap.read_frame();
 		if (!src_buf)
 		{
-			LOG(MOD_MAIN, LOG_ERROR) << "V4L2 read_frame failed, retrying...\n";
+			// 无新帧（poll 超时/EAGAIN）或设备错误：仅首次与每 10 次提示一次，避免刷屏
+			consecutive_empty++;
+			if (consecutive_empty == 1 || consecutive_empty % 10 == 0)
+			{
+				LOG(MOD_MAIN, LOG_WARN) << "V4L2 read_frame returned no frame ("
+				          << consecutive_empty << "x)\n";
+			}
 			continue;
 		}
-		pipeline.push_dma_frame(frame_id++, src_buf);
+		consecutive_empty = 0;
+		cv::Mat orig_img;
+		v4l2_dma_to_mat(src_buf, orig_img);
+		pipeline.push_dma_frame(frame_id++, src_buf, orig_img);
 	}
 
 	cap.stop();
@@ -318,7 +360,7 @@ int run_v4l2_mode(const Args& args, PipelineManager& pipeline)
 // ============================================================================
 int run_video_mode(const Args& args, PipelineManager& pipeline)
 {
-	// 任务 4：优先 GStreamer + RK MPP 硬件解码，失败回退 OpenCV 软解
+	// 优先 GStreamer + RK MPP 硬件解码，失败回退 OpenCV 软解
 	GstVideoReader gst_reader;
 	bool use_gst = gst_reader.open(args.video_path);
 	cv::VideoCapture cap;
@@ -327,15 +369,28 @@ int run_video_mode(const Args& args, PipelineManager& pipeline)
 	int frame_id = 0;
 	cv::Mat frame;
 
+	// -F/--fps 显式指定时：输入侧按指定速率限速喂帧，输出侧用指定 fps 写容器；
+	// 未指定时保持默认行为（输入不限速，输出用源帧率）。
+	double feed_fps = (args.fps_set && args.fps > 0) ? (double)args.fps : 0.0;
+	auto feed_start = std::chrono::steady_clock::now();
+	int64_t fed_frames = 0;
+	auto pace_feed = [&]()
+	{
+		if (feed_fps <= 0) return;
+		fed_frames++;
+		auto target = feed_start + std::chrono::duration<double>(fed_frames / feed_fps);
+		std::this_thread::sleep_until(target);
+	};
+
 	if (use_gst)
 	{
-		// 【任务 4 追加迭代】帧率来源：
+		// 帧率来源：
 		// - 容器/caps 提供有效帧率（CFR）→ 直接使用；
 		// - VFR 或帧率元数据缺失（如 0/1）→ 两遍法：先纯解码统计容器时长/平均帧率
 		//   （MPP 硬解，555 帧约 2-3s），再正常处理。避免"取前两帧间隔"在 VFR 源上
 		//   误判（如 480×332 录屏前段 60fps burst → 输出 60fps → 时长 21.7s 被压成 9.2s）。
 		double fps_est = gst_reader.fps();
-		if (!gst_reader.caps_fps_authoritative())
+		if (!args.fps_set && !gst_reader.caps_fps_authoritative())
 		{
 			GstVideoReader probe;
 			if (probe.open(args.video_path))
@@ -366,17 +421,26 @@ int run_video_mode(const Args& args, PipelineManager& pipeline)
 		actual_h = frame.rows;
 		LOG(MOD_MAIN, LOG_INFO) << "GStreamer+MPP hardware decode: "
 		          << actual_w << "x" << actual_h << " @" << fps << "\n";
+		double out_fps = args.fps_set ? (double)args.fps : fps;
+		if (args.fps_set)
+		{
+			LOG(MOD_MAIN, LOG_INFO) << "User --fps override: input feed & output fps = "
+			          << args.fps << "\n";
+		}
 		if (!args.output_path.empty())
 		{
-			pipeline.set_video_output(args.output_path, fps);
+			pipeline.set_video_output(args.output_path, out_fps);
 		}
 		pipeline.push_image(frame_id++, frame);
+		pace_feed();
 		if (has_second)
 		{
 			pipeline.push_image(frame_id++, frame2);
+			pace_feed();
 			while (!g_should_exit && gst_reader.read(frame))
 			{
 				pipeline.push_image(frame_id++, frame);
+				pace_feed();
 			}
 		}
 		gst_reader.release();
@@ -396,13 +460,15 @@ int run_video_mode(const Args& args, PipelineManager& pipeline)
 		actual_h = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
 		LOG(MOD_MAIN, LOG_WARN) << "GStreamer unavailable, fallback to OpenCV soft decode: "
 		          << actual_w << "x" << actual_h << "\n";
+		double out_fps = args.fps_set ? (double)args.fps : fps;
 		if (!args.output_path.empty())
 		{
-			pipeline.set_video_output(args.output_path, fps);
+			pipeline.set_video_output(args.output_path, out_fps);
 		}
 		while (!g_should_exit && cap.read(frame))
 		{
 			pipeline.push_image(frame_id++, frame);
+			pace_feed();
 		}
 		cap.release();
 	}
@@ -478,8 +544,18 @@ int main(int argc, char** argv)
 	PipelineManager pipeline(pre_workers, npu_workers, post_workers,
 	                         args.model_path,
 	                         args.queue_cap, args.conf, args.npu_mask);
+	pipeline.set_display(args.show_display);
+	pipeline.set_quit_callback([]()
+	{
+		g_should_exit = true;
+	});
 
-	// 注意：此处不再统一调用 set_video_output，而是在各个采集模式中按需调用
+	// 输出视频由各采集模式按需调用 set_video_output 设置（不在此统一处理）
+
+	// V4l2ZeroCopyCapture 必须在 PipelineManager 之前创建、之后析构：
+	// 帧的 DmaBufferPtr deleter 会向采集对象归还 buffer，若采集对象先于
+	// 流水线销毁（如 run_xxx_mode 局部对象），析构期会访问已销毁对象 → 崩溃。
+	V4l2ZeroCopyCapture cap;
 
 	// 选择采集模式
 	int ret = 0;
@@ -493,7 +569,7 @@ int main(int argc, char** argv)
 	}
 	else if (args.use_v4l2)
 	{
-		ret = run_v4l2_mode(args, pipeline);
+		ret = run_v4l2_mode(args, pipeline, cap);
 	}
 	else
 	{

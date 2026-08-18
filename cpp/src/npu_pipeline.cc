@@ -18,6 +18,11 @@ static inline int64_t now_us()
 
 PerfCounter g_perf;
 
+namespace
+{
+constexpr const char* kDisplayWindow = "RT-DETR";
+}
+
 // ============================================================================
 // 构造 / 析构
 // ============================================================================
@@ -33,11 +38,12 @@ PipelineManager::PipelineManager(int num_pre, int num_npu, int num_post,
 	  num_npu_workers_(num_npu),
 	  conf_thres_(conf_thres),
 	  npu_mask_(npu_mask),
-	  video_output_path_("result_video.mp4"),
+	  video_output_path_(""),   // 默认不输出视频；仅 -o 指定后写入（与 README 一致）
 	  video_fps_(30.0),
 	  video_initialized_(false),
 	  next_write_frame_id_(0),
-	  is_running_(true)
+	  is_running_(true),
+	  display_queue_(4)
 {
 
 	rga_preprocessor().init(num_npu + 4);
@@ -48,6 +54,9 @@ PipelineManager::PipelineManager(int num_pre, int num_npu, int num_post,
 		workers_npu_.emplace_back(&PipelineManager::worker_npu_infer, this, i);
 	for (int i = 0; i < num_post; ++i)
 		workers_post_.emplace_back(&PipelineManager::worker_postprocess, this);
+
+	// 显示线程：无显示帧时阻塞在队列上，析构时 shutdown 唤醒退出
+	display_thread_ = std::thread(&PipelineManager::display_worker, this);
 
 	LOG(MOD_PIPELINE, LOG_INFO) << "Started: pre=" << num_pre
 	          << " npu=" << num_npu
@@ -82,6 +91,10 @@ PipelineManager::~PipelineManager()
 		queue_post_.push(nullptr);
 	for (auto& t : workers_post_) if (t.joinable()) t.join();
 
+	// 终止显示线程（shutdown 唤醒 pop）
+	display_queue_.shutdown();
+	if (display_thread_.joinable()) display_thread_.join();
+
 	is_running_ = false;
 	queue_raw_.shutdown();
 	queue_npu_.shutdown();
@@ -92,7 +105,7 @@ PipelineManager::~PipelineManager()
 }
 
 // ============================================================================
-// 输出产物config设置
+// 输出设置（视频输出路径与帧率）
 // ============================================================================
 void PipelineManager::set_video_output(const std::string& path, double fps)
 {
@@ -103,6 +116,12 @@ void PipelineManager::set_video_output(const std::string& path, double fps)
 	          << " @ " << video_fps_ << " fps\n";
 }
 
+void PipelineManager::set_display(bool enable)
+{
+	display_enabled_ = enable;
+	LOG(MOD_PIPELINE, LOG_INFO) << "Real-time display " << (enable ? "enabled" : "disabled") << "\n";
+}
+
 // ============================================================================
 // 输入接口
 // ============================================================================
@@ -111,7 +130,7 @@ void PipelineManager::push_dma_frame(int frame_id, const DmaBufferPtr& src_buf, 
 	// 【健壮性】NPU 不可用时快速丢帧，避免 reader 阻塞在满队列上无法退出
 	if (!workers_ok_.load()) return;
 
-	// fps_记录起始点_
+	// 记录 FPS 统计起始时间（首次入帧时）
 	if (!started_)
 	{
 		start_time_ = std::chrono::steady_clock::now();
@@ -122,9 +141,11 @@ void PipelineManager::push_dma_frame(int frame_id, const DmaBufferPtr& src_buf, 
 	bundle->frame_id = frame_id;
 	bundle->src_buf = src_buf;
 	bundle->use_dma_src = true;
+	bundle->pred_boxes.resize(NUM_BOXES * 4);
+	bundle->pred_logits.resize(NUM_BOXES * NUM_CLASSES);
 	if (!orig_img.empty())
 	{
-		bundle->orig_img = orig_img.clone();   // ★ 关键：克隆图像
+		bundle->orig_img = orig_img.clone();   // 克隆原始图像用于画框/写视频（DMA 源帧会被相机回收，须先复制）
 	}
 	bundle->t_enqueue = now_us();
 	queue_raw_.push(std::move(bundle));
@@ -135,7 +156,7 @@ void PipelineManager::push_image(int frame_id, const cv::Mat& img)
 	// 【健壮性】NPU 不可用时快速丢帧，避免 reader 阻塞在满队列上无法退出
 	if (!workers_ok_.load()) return;
 
-	// fps_记录起始点_
+	// 记录 FPS 统计起始时间（首次入帧时）
 	if (!started_)
 	{
 		start_time_ = std::chrono::steady_clock::now();
@@ -144,8 +165,10 @@ void PipelineManager::push_image(int frame_id, const cv::Mat& img)
 
 	auto bundle = std::make_shared<FrameBundle>();
 	bundle->frame_id = frame_id;
-	bundle->orig_img = img.clone();   // ★ 已经 clone，但保留
+	bundle->orig_img = img.clone();   // 克隆输入图像，避免上游 cv::Mat 复用导致内容被覆写
 	bundle->use_dma_src = false;
+	bundle->pred_boxes.resize(NUM_BOXES * 4);
+	bundle->pred_logits.resize(NUM_BOXES * NUM_CLASSES);
 	bundle->t_enqueue = now_us();
 	queue_raw_.push(std::move(bundle));
 }
@@ -161,8 +184,7 @@ bool PipelineManager::detect_image(const cv::Mat& src, cv::Mat& out)
 		return false;
 	}
 
-	// 1. cv::Mat → 640x640 RGB DMA（CPU resize+cvtColor 后紧致拷贝，
-	//    与原版一致；避免 RGA 源 stride 对齐污染问题）
+	// 1. cv::Mat → 640x640 RGB DMA（RGA virt→DMA 主路径，失败自动回退 CPU）
 	DmaBufferPtr input_buf = rga_preprocessor().preprocess_mat_to_dma(src);
 	if (!input_buf)
 	{
@@ -170,7 +192,7 @@ bool PipelineManager::detect_image(const cv::Mat& src, cv::Mat& out)
 		return false;
 	}
 
-	// 3. NPU 推理（独立 context，与视频 worker 互不影响）
+	// 2. NPU 推理（独立 context，与视频 worker 互不影响）
 	RKNNDetector detector;
 	if (!detector.init(model_path_, npu_mask_))
 	{
@@ -187,7 +209,7 @@ bool PipelineManager::detect_image(const cv::Mat& src, cv::Mat& out)
 		return false;
 	}
 
-	// 4. 后处理解码 + 画框
+	// 3. 后处理解码 + 画框
 	std::vector<DetectResult> results = decode_rtdetr_output(
 	                                      pred_boxes.data(), pred_logits.data(),
 	                                      num_boxes, src.cols, src.rows,
@@ -232,6 +254,9 @@ void PipelineManager::worker_preprocess()
 			continue;
 		}
 
+		// 提前释放源 DMA 缓冲：V4L2 相机 buffer 应尽快归还采集队列，
+		// 否则源 buffer 会一直被帧包持有到后处理结束，相机因无 buffer 可用而降速。
+		bundle->src_buf.reset();
 		bundle->t_pre_done = now_us();
 		total_pre_us_ += (bundle->t_pre_done - t0);
 		queue_npu_.push(std::move(bundle));
@@ -312,6 +337,12 @@ void PipelineManager::worker_postprocess()
 			draw_results(bundle->orig_img, results);
 		}
 
+		// 实时显示：丢旧保新队列，避免显示阻塞拖慢流水线
+		if (display_enabled_.load() && !bundle->orig_img.empty())
+		{
+			display_queue_.push_drop_oldest(bundle->orig_img);
+		}
+
 		// ==================== 视频写入（核心逻辑） ====================
 		if (!video_output_path_.empty())
 		{
@@ -378,7 +409,7 @@ void PipelineManager::worker_postprocess()
 			          << " post=" << (total_post_us_.load() / n / 1000) << "ms"
 			          << " results=" << results.size() << "\n";
 
-			// fps_display
+			// 周期性打印实时 FPS
 			if (n % 30 == 0)
 			{
 				auto now = std::chrono::steady_clock::now();
@@ -390,6 +421,36 @@ void PipelineManager::worker_postprocess()
 
 	}
 
+}
+
+// ============================================================================
+// 实时显示线程
+// ============================================================================
+void PipelineManager::display_worker()
+{
+	while (true)
+	{
+		cv::Mat frame;
+		if (!display_queue_.pop(frame)) break;
+		if (frame.empty()) continue;
+		try
+		{
+			cv::imshow(kDisplayWindow, frame);
+			int key = cv::waitKey(1);
+			if (key == 'q' || key == 27)
+			{
+				display_quit_ = true;
+				if (quit_callback_) quit_callback_();
+			}
+		}
+		catch (const cv::Exception& e)
+		{
+			// 无显示环境（headless）时 imshow 抛异常：记录并关闭显示，不中断检测
+			LOG(MOD_PIPELINE, LOG_ERROR) << "Display error (headless?): " << e.what() << "\n";
+			display_enabled_ = false;
+			break;
+		}
+	}
 }
 
 // ============================================================================

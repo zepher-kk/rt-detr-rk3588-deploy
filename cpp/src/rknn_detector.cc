@@ -56,7 +56,7 @@ RKNNDetector::~RKNNDetector()
 }
 
 // ============================================================================
-// 查询输入输出属性（通过名称匹配）
+// 查询输入输出属性（按元素数形状识别 boxes/logits）
 // ============================================================================
 bool RKNNDetector::query_io_attrs()
 {
@@ -88,10 +88,11 @@ bool RKNNDetector::query_io_attrs()
 		}
 	}
 
-	// 遍历所有输出，通过形状识别 boxes 和 logits
-	// （与原版 rknn_rtdetr_demo 一致：boxes n_elems==300*4，logits n_elems==300*NUM_CLASSES，最后匹配者胜）
+	// 遍历所有输出，收集全部张量属性，稍后按元素数形状识别 boxes 和 logits
 	boxes_idx_ = -1;
 	logits_idx_ = -1;
+	output_attrs_.clear();
+	output_attrs_.reserve(n_output_);
 	for (int i = 0; i < n_output_; ++i)
 	{
 		rknn_tensor_attr attr;
@@ -102,23 +103,17 @@ bool RKNNDetector::query_io_attrs()
 			LOG(MOD_RKNN, LOG_ERROR) << "query output[" << i << "] failed: " << ret << "\n";
 			continue;
 		}
+		output_attrs_.push_back(attr);
 		LOG(MOD_RKNN, LOG_INFO) << "output[" << i << "] n_elems=" << attr.n_elems
 		          << " type=" << attr.type << " fmt=" << attr.fmt
 		          << " scale=" << attr.scale << " zp=" << attr.zp
 		          << " name=" << attr.name << "\n";
 
-		// 与原版一致：按元素数精确匹配（300*4 / 300*NUM_CLASSES），最后匹配者胜
-		if (attr.n_elems == 300 * 4)
-		{
-			boxes_idx_ = i;
-			boxes_attr_ = attr;
-		}
-		if (attr.n_elems == 300 * NUM_CLASSES)
-		{
-			logits_idx_ = i;
-			logits_attr_ = attr;
-		}
 	}
+
+	resolve_rtdetr_output_indices(output_attrs_, boxes_idx_, logits_idx_);
+	if (boxes_idx_ >= 0) boxes_attr_ = output_attrs_[boxes_idx_];
+	if (logits_idx_ >= 0) logits_attr_ = output_attrs_[logits_idx_];
 
 	if (boxes_idx_ < 0 || logits_idx_ < 0)
 	{
@@ -178,6 +173,13 @@ bool RKNNDetector::init(const std::string& model_path, rknn_core_mask core_mask)
 		return false;
 	}
 
+	output_buffers_.resize(n_output_);
+	for (int i = 0; i < n_output_; ++i)
+	{
+		// 按张量元素数预分配 float 输出缓冲：推理时 is_prealloc 复用，避免每帧 malloc/free
+		output_buffers_[i].assign(output_attrs_[i].n_elems, 0.0f);
+	}
+
 	is_init_ = true;
 	return true;
 }
@@ -205,49 +207,34 @@ bool RKNNDetector::infer_zero_copy(const DmaBufferPtr& input_buf,
 	if (rknn_inputs_set(ctx_, 1, inputs) < 0) return false;
 	if (rknn_run(ctx_, NULL) < 0) return false;
 
-	rknn_input_output_num io_num;
-	if (rknn_query(ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num)) < 0) return false;
-
-	std::vector<rknn_output> outputs(io_num.n_output);
-	for (int i = 0; i < io_num.n_output; ++i)
+	std::vector<rknn_output> outputs(n_output_);
+	for (int i = 0; i < n_output_; ++i)
 	{
-		outputs[i].want_float = 1;   // 关键：请求 float 反量化
-		outputs[i].is_prealloc = 0;
-		outputs[i].buf = nullptr;
-		outputs[i].size = 0;
+		outputs[i].want_float = 1;   // 请求 float 反量化输出
+		outputs[i].index = i;
+		outputs[i].is_prealloc = 1;  // 写入 init 时预分配的缓冲，免动态分配
+		outputs[i].buf = output_buffers_[i].data();
+		outputs[i].size = output_attrs_[i].n_elems * sizeof(float);
 	}
-	if (rknn_outputs_get(ctx_, io_num.n_output, outputs.data(), NULL) < 0) return false;
+	if (rknn_outputs_get(ctx_, n_output_, outputs.data(), NULL) < 0) return false;
 
-	// 识别 boxes 和 logits（按元素数）
-	int boxes_idx = -1, logits_idx = -1;
-	for (int i = 0; i < io_num.n_output; ++i)
+	// 从预分配缓冲中拷贝 boxes / logits 到输出向量
+	const size_t boxes_count = (size_t)boxes_attr_.n_elems;
+	const size_t logits_count = (size_t)logits_attr_.n_elems;
+	if (out_boxes.size() != boxes_count) out_boxes.resize(boxes_count);
+	if (out_logits.size() != logits_count) out_logits.resize(logits_count);
+	if (boxes_count > 0)
 	{
-		rknn_tensor_attr attr;
-		attr.index = i;
-		if (rknn_query(ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr)) == 0)
-		{
-			if (attr.n_elems == 300 * 4) boxes_idx = i;
-			if (attr.n_elems == 300 * NUM_CLASSES) logits_idx = i;
-		}
+		memcpy(out_boxes.data(), output_buffers_[boxes_idx_].data(), boxes_count * sizeof(float));
 	}
-
-	if (boxes_idx != -1 && logits_idx != -1)
+	if (logits_count > 0)
 	{
-		float* b_data = (float*)outputs[boxes_idx].buf;
-		float* l_data = (float*)outputs[logits_idx].buf;
-		out_boxes.assign(b_data, b_data + 300 * 4);
-		out_logits.assign(l_data, l_data + 300 * NUM_CLASSES);
-		num_boxes = 300;
-		num_classes = NUM_CLASSES;
-
+		memcpy(out_logits.data(), output_buffers_[logits_idx_].data(), logits_count * sizeof(float));
 	}
-	else
-	{
-		rknn_outputs_release(ctx_, io_num.n_output, outputs.data());
-		return false;
-	}
+	num_boxes = (int)(boxes_count / 4);
+	num_classes = (int)(logits_count / 300);
 
-	rknn_outputs_release(ctx_, io_num.n_output, outputs.data());
+	rknn_outputs_release(ctx_, n_output_, outputs.data());
 	return true;
 }
 // ============================================================================

@@ -64,6 +64,23 @@ class BoundedSafeQueue
 		}
 
 		/**
+		 * @brief 入队一个元素，队满时丢弃最旧元素，绝不阻塞调用方。
+		 * @param task 要推入的元素
+		 * @note 用于实时显示等低时延场景：保证最新帧优先，避免显示拖慢流水线。
+		 */
+		void push_drop_oldest(T task)
+		{
+			std::unique_lock<std::mutex> lock(mtx_);
+			if (capacity_ > 0 && queue_.size() >= capacity_)
+			{
+				queue_.pop();
+			}
+			queue_.push(std::move(task));
+			lock.unlock();
+			cv_not_empty_.notify_one();
+		}
+
+		/**
 		 * @brief 出队一个任务，若队列空则阻塞。
 		 * @param task 输出参数，接收元素
 		 * @return true 成功取出，false 队列已关闭且为空
@@ -139,10 +156,18 @@ class PipelineManager
 		std::chrono::steady_clock::time_point start_time_;
 		bool started_ = false;
 
+		// 实时显示：专用线程 + 丢旧保新队列，显示不阻塞流水线
+		std::atomic<bool> display_enabled_{false};
+		std::atomic<bool> display_quit_{false};
+		BoundedSafeQueue<cv::Mat> display_queue_;
+		std::thread display_thread_;
+		std::function<void()> quit_callback_;   // 显示窗口按 q/ESC 时通知主流程退出
+
 		// function
 		void worker_preprocess();
 		void worker_npu_infer(int core_id);
 		void worker_postprocess();
+		void display_worker();
 		void flush_video_buffer();  // 析构时强制写入所有缓存帧
 
 	public:
@@ -195,6 +220,24 @@ class PipelineManager
 		 * @param fps  输出帧率
 		 */
 		void set_video_output(const std::string& path, double fps = 30.0);
+
+		/**
+		 * @brief 启用/关闭实时检测画面显示。
+		 * @param enable true 时由专用线程调用 cv::imshow + waitKey 播放检测帧。
+		 */
+		void set_display(bool enable);
+
+		/** @brief 用户是否通过显示窗口请求退出（按 q 或 ESC）。 */
+		bool display_quit_requested() const
+		{
+			return display_quit_.load();
+		}
+
+		/** @brief 注册显示窗口退出回调（通常置全局退出标志）。 */
+		void set_quit_callback(std::function<void()> cb)
+		{
+			quit_callback_ = std::move(cb);
+		}
 
 		/** @brief 等待所有队列处理完毕（用于优雅退出）。 */
 		void wait_idle();

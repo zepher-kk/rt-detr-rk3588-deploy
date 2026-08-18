@@ -18,6 +18,8 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
+#include <fstream>
 #include <chrono>
 
 #include <rga.h>
@@ -311,6 +313,79 @@ void test_postprocess_edge_cases()
 // ============================================================================
 // 测试 8: BoundedSafeQueue 基本功能
 // ============================================================================
+void test_resolve_output_indices()
+{
+	TEST("resolve_rtdetr_output_indices");
+
+	std::vector<rknn_tensor_attr> attrs(5);
+	for (auto& a : attrs) memset(&a, 0, sizeof(a));
+	attrs[0].n_elems = 4200;
+	attrs[1].n_elems = 1200;
+	attrs[2].n_elems = 3000;
+	attrs[3].n_elems = 1200;
+	attrs[4].n_elems = 3000;
+
+	int boxes_idx = -1;
+	int logits_idx = -1;
+	resolve_rtdetr_output_indices(attrs, boxes_idx, logits_idx);
+
+	ASSERT_EQ(boxes_idx, 3, "boxes index should be the last 1200-elem tensor");
+	ASSERT_EQ(logits_idx, 4, "logits index should be the last 3000-elem tensor");
+	PASS();
+}
+
+void test_rknn_zero_copy_matches_infer_only()
+{
+	TEST("rknn_zero_copy_matches_infer_only");
+
+	const char* model_path = "/home/neardi/Workspace_Codex/models/RT-DETR-RK3588-Models/.rknn/rtdetr_i8.rknn";
+	const char* image_path = "/home/neardi/Workspace_Codex/img/uav.jpg";
+	std::ifstream mf(model_path, std::ios::binary);
+	if (!mf.good())
+	{
+		std::cout << "SKIP (model missing) ";
+		PASS();
+		return;
+	}
+	mf.close();
+
+	cv::Mat src = cv::imread(image_path, cv::IMREAD_COLOR);
+	ASSERT_TRUE(!src.empty(), "uav.jpg should be readable");
+
+	rga_preprocessor().init(2);
+	DmaBufferPtr input_buf = rga_preprocessor().preprocess_mat_to_dma(src);
+	ASSERT_TRUE(input_buf != nullptr, "preprocess_mat_to_dma failed");
+	cv::Mat preprocessed(640, 640, CV_8UC3, input_buf->ptr);
+
+	RKNNDetector d0;
+	ASSERT_TRUE(d0.init(model_path, RKNN_NPU_CORE_AUTO), "zero-copy detector init failed");
+	std::vector<float> boxes0, logits0;
+	int nb0 = 0, nc0 = 0;
+	ASSERT_TRUE(d0.infer_zero_copy(input_buf, boxes0, logits0, nb0, nc0),
+	            "infer_zero_copy failed");
+
+	RKNNDetector d1;
+	ASSERT_TRUE(d1.init(model_path, RKNN_NPU_CORE_AUTO), "infer_only detector init failed");
+	std::vector<float> boxes1, logits1;
+	int nb1 = 0, nc1 = 0;
+	ASSERT_TRUE(d1.infer_only(preprocessed, boxes1, logits1, nb1, nc1),
+	            "infer_only failed");
+
+	ASSERT_EQ(nb0, nb1, "box count mismatch");
+	ASSERT_EQ(nc0, nc1, "class count mismatch");
+	ASSERT_EQ(boxes0.size(), boxes1.size(), "box vector size mismatch");
+	ASSERT_EQ(logits0.size(), logits1.size(), "logit vector size mismatch");
+	for (size_t i = 0; i < boxes0.size(); ++i)
+	{
+		ASSERT_TRUE(std::fabs(boxes0[i] - boxes1[i]) < 1e-6f, "box value mismatch");
+	}
+	for (size_t i = 0; i < logits0.size(); ++i)
+	{
+		ASSERT_TRUE(std::fabs(logits0[i] - logits1[i]) < 1e-6f, "logit value mismatch");
+	}
+	PASS();
+}
+
 void test_bounded_queue()
 {
 	TEST("BoundedSafeQueue 基本功能");
@@ -378,7 +453,7 @@ void test_performance_benchmark()
 }
 
 // ============================================================================
-// 测试 12: detect_image 空图保护（uncle-bob 约束：新增代码必须配套单元测试）
+// 测试 12: detect_image 空图保护
 // ============================================================================
 void test_detect_image_guard()
 {
@@ -408,7 +483,7 @@ void test_preprocess_mat_to_dma_correctness()
 		src.row(y).setTo(cv::Scalar(y % 256, 0, 255));
 	}
 
-	// CPU 参考：与原版一致的 resize + BGR→RGB
+	// CPU 参考：resize + BGR→RGB
 	cv::Mat ref;
 	cv::resize(src, ref, cv::Size(640, 640));
 	cv::cvtColor(ref, ref, cv::COLOR_BGR2RGB);
@@ -489,7 +564,192 @@ void test_dma_to_dma_stride_safe()
 }
 
 // ============================================================================
-// 测试 14: 日志等级化模块化控制（uncle-bob 约束：新代码必须配套单元测试）
+// 测试 27: BoundedSafeQueue 丢旧保新（实时显示队列）
+// ============================================================================
+void test_queue_drop_oldest()
+{
+	TEST("BoundedSafeQueue 丢旧保新");
+
+	BoundedSafeQueue<int> q(3);
+	for (int i = 0; i < 5; ++i) q.push_drop_oldest(i);
+
+	int v;
+	ASSERT_EQ(q.size(), 3, "队满后容量应保持 3");
+	q.pop(v);
+	ASSERT_EQ(v, 2, "应保留最新元素 2");
+	q.pop(v);
+	ASSERT_EQ(v, 3, "应保留最新元素 3");
+	q.pop(v);
+	ASSERT_EQ(v, 4, "应保留最新元素 4");
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 23: YUYV→BGR 转换与 OpenCV 参考一致（USB 相机 YUYV 回退路径）
+// ============================================================================
+void test_yuyv422_to_bgr_correctness()
+{
+	TEST("yuyv422_to_bgr 与 OpenCV 参考一致");
+
+	const int w = 640, h = 480;
+	std::vector<uint8_t> yuyv((size_t)w * h * 2);
+	// 确定性伪随机填充，避免全 0/全 128 退化图案
+	unsigned seed = 12345u;
+	auto rnd = [&seed]() -> uint8_t
+	{
+		seed = seed * 1103515245u + 12345u;
+		return (uint8_t)((seed >> 16) & 0xFF);
+	};
+	for (auto& b : yuyv) b = rnd();
+
+	cv::Mat ref(h, w, CV_8UC3);
+	cv::cvtColor(cv::Mat(h, w, CV_8UC2, yuyv.data()), ref, cv::COLOR_YUV2BGR_YUY2);
+
+	cv::Mat out(h, w, CV_8UC3);
+	yuyv422_to_bgr(yuyv.data(), (size_t)w * 2, out.data, (size_t)out.step, w, h);
+
+	const size_t n = out.total() * out.elemSize();
+	double sum = 0.0;
+	for (size_t k = 0; k < n; ++k)
+		sum += std::fabs((int)out.data[k] - (int)ref.data[k]);
+	double mae = sum / n;
+	ASSERT_TRUE(mae < 2.0, "YUYV→BGR 与 OpenCV 参考偏差过大");
+	std::cout << "MAE=" << mae << " ";
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 24: YUYV DMA→DMA 预处理（模拟 USB 相机 1280x720 YUYV 帧）
+// ============================================================================
+void test_yuyv_dma_to_dma()
+{
+	TEST("YUYV DMA→DMA 预处理(相机帧模拟)");
+
+	const int w = 1280, h = 720;
+	DmaBufferPool pool(w, h, RK_FORMAT_YUYV_422, 1);
+	DmaBufferPtr dma = pool.alloc();
+	ASSERT_TRUE(dma != nullptr, "YUYV DMA 分配失败");
+
+	// 填充确定性 YUYV 测试图案（行渐变 + 色度渐变，含有效色彩）
+	uint8_t* drow = (uint8_t*)dma->ptr;
+	for (int y = 0; y < h; ++y)
+	{
+		uint8_t* p = drow;
+		for (int x = 0; x < w; x += 2)
+		{
+			p[0] = (uint8_t)((y * 2 + x / 4) & 0xFF);         // Y0
+			p[1] = (uint8_t)((x / 2) & 0xFF);                 // U
+			p[2] = (uint8_t)((y * 3 + x / 3) & 0xFF);         // Y1
+			p[3] = (uint8_t)((255 - x / 2) & 0xFF);           // V
+			p += 4;
+		}
+		drow += dma->stride;
+	}
+
+	int64_t dma_cnt_before = g_perf.total_dma_to_dma.load();
+	int64_t cpu_cnt_before = g_perf.total_virt_to_dma.load();
+
+	RgaPreprocessor& pre = rga_preprocessor();
+	pre.init(2);
+	DmaBufferPtr out = pre.preprocess_dma_to_dma(dma);
+	ASSERT_TRUE(out != nullptr, "YUYV 预处理失败");
+	ASSERT_TRUE(out->width == 640 && out->height == 640, "输出尺寸错误");
+	ASSERT_TRUE(out->format == RK_FORMAT_RGB_888, "输出格式应为 RGB");
+
+	bool used_rga = g_perf.total_dma_to_dma.load() > dma_cnt_before;
+	bool used_cpu = g_perf.total_virt_to_dma.load() > cpu_cnt_before;
+	std::cout << (used_rga ? "RGA" : "CPU") << " path ";
+
+	// CPU 参考：YUYV→BGR→resize→RGB；宽松阈值做健全性检查
+	// （RGA 硬件 YUV 转换矩阵与 OpenCV 存在少量差异，正确性由单测 23 严格覆盖）
+	cv::Mat yuyv_mat(h, w, CV_8UC2, dma->ptr, dma->stride);
+	cv::Mat ref;
+	cv::cvtColor(yuyv_mat, ref, cv::COLOR_YUV2BGR_YUY2);
+	cv::resize(ref, ref, cv::Size(640, 640));
+	cv::cvtColor(ref, ref, cv::COLOR_BGR2RGB);
+
+	const uint8_t* a = (const uint8_t*)out->ptr;
+	const uint8_t* b = ref.data;
+	const size_t n = ref.total() * ref.elemSize();
+	double sum = 0.0;
+	for (size_t k = 0; k < n; ++k)
+		sum += (a[k] >= b[k]) ? (a[k] - b[k]) : (b[k] - a[k]);
+	double mae = sum / n;
+	ASSERT_TRUE(mae < 40.0, "YUYV 预处理输出与参考偏差过大");
+	std::cout << "MAE=" << mae << " ";
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 25: 分辨率自适应画框样式
+// ============================================================================
+void test_draw_style_adaptive()
+{
+	TEST("compute_draw_style 分辨率自适应");
+
+	DrawStyle s720 = compute_draw_style(1280, 720);
+	ASSERT_EQ(s720.thickness, 2, "720p 线宽应为 2");
+	ASSERT_TRUE(std::fabs(s720.font_scale - 0.6) < 1e-6, "720p 字号应为 0.6");
+
+	DrawStyle s1080 = compute_draw_style(1920, 1080);
+	ASSERT_EQ(s1080.thickness, 3, "1080p 线宽应为 3");
+	ASSERT_TRUE(std::fabs(s1080.font_scale - 0.9) < 1e-6, "1080p 字号应为 0.9");
+
+	DrawStyle s480 = compute_draw_style(854, 480);
+	ASSERT_EQ(s480.thickness, 1, "480p 线宽应为 1");
+	ASSERT_TRUE(s480.font_scale >= 0.35 && s480.font_scale < 0.5, "480p 字号应限幅");
+
+	DrawStyle s4k = compute_draw_style(3840, 2160);
+	ASSERT_EQ(s4k.thickness, 4, "4K 线宽应封顶 4");
+	ASSERT_TRUE(std::fabs(s4k.font_scale - 1.2) < 1e-6, "4K 字号应封顶 1.2");
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 26: draw_results 稠密小目标冒烟（细框不遮挡、多帧不崩溃）
+// ============================================================================
+void test_draw_results_dense_small()
+{
+	TEST("draw_results 稠密小目标冒烟");
+
+	cv::Mat img(360, 640, CV_8UC3, cv::Scalar(20, 30, 40));
+	std::vector<DetectResult> results;
+	for (int i = 0; i < 50; ++i)
+	{
+		DetectResult r;
+		r.class_id = i % NUM_CLASSES;
+		r.score = 0.8f;
+		r.box = cv::Rect((i % 10) * 60, (i / 10) * 60, 12, 12);   // 小目标（12x12 < 阈值）
+		results.push_back(r);
+	}
+	DetectResult big;
+	big.class_id = 3;
+	big.score = 0.92f;
+	big.box = cv::Rect(260, 130, 160, 120);                       // 大目标（画框+文字）
+	results.push_back(big);
+
+	draw_results(img, results);
+	ASSERT_TRUE(!img.empty(), "绘制后图像不应为空");
+
+	// 第一个小目标所在区域应有边框像素被修改（细框已画出）
+	int changed = 0;
+	for (int y = 0; y <= 12; ++y)
+		for (int x = 0; x <= 12; ++x)
+			if (img.at<cv::Vec3b>(y, x) != cv::Vec3b(20, 30, 40)) changed++;
+	ASSERT_TRUE(changed > 0, "小目标应至少画出细框");
+
+	// 再次调用（模拟多帧重复绘制）不崩溃
+	draw_results(img, results);
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 14: 日志等级化模块化控制
 // ============================================================================
 void test_logger_modules()
 {
@@ -514,7 +774,7 @@ void test_logger_modules()
 }
 
 // ============================================================================
-// 测试 16: GStreamer MPP 硬件编码写入（uncle-bob：新代码配套测试）
+// 测试 16: GStreamer MPP 硬件编码写入
 // ============================================================================
 void test_gst_video_writer()
 {
@@ -714,14 +974,21 @@ int main()
 
 	test_postprocess_decode();
 	test_postprocess_edge_cases();
+	test_resolve_output_indices();
+	test_rknn_zero_copy_matches_infer_only();
 
 	test_bounded_queue();
 	test_bounded_queue_poison();
+	test_queue_drop_oldest();
 
 	test_performance_benchmark();
 	test_detect_image_guard();
 	test_preprocess_mat_to_dma_correctness();
 	test_dma_to_dma_stride_safe();
+	test_yuyv422_to_bgr_correctness();
+	test_yuyv_dma_to_dma();
+	test_draw_style_adaptive();
+	test_draw_results_dense_small();
 	test_logger_modules();
 	test_gst_video_writer();
 	test_gst_video_reader();

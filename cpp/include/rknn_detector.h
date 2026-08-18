@@ -8,6 +8,31 @@
 #include "rknn_api.h"
 
 /**
+ * @brief 在全部输出张量中按元素数识别 RT-DETR 的 boxes 与 logits。
+ * @param attrs       查询到的全部输出张量属性
+ * @param boxes_idx   输出：boxes 张量索引（未找到为 -1）
+ * @param logits_idx  输出：logits 张量索引（未找到为 -1）
+ * @param boxes_elems  boxes 张量元素数（默认 300*4）
+ * @param logits_elems logits 张量元素数（默认 300*NUM_CLASSES）
+ * @note 按元素数精确匹配，最后一个匹配者胜（与模型导出约定一致）。
+ */
+inline void resolve_rtdetr_output_indices(
+    const std::vector<rknn_tensor_attr>& attrs,
+    int& boxes_idx,
+    int& logits_idx,
+    int boxes_elems = 300 * 4,
+    int logits_elems = 300 * NUM_CLASSES)
+{
+	boxes_idx = -1;
+	logits_idx = -1;
+	for (size_t i = 0; i < attrs.size(); ++i)
+	{
+		if (attrs[i].n_elems == (uint32_t)boxes_elems) boxes_idx = (int)i;
+		if (attrs[i].n_elems == (uint32_t)logits_elems) logits_idx = (int)i;
+	}
+}
+
+/**
  * @brief RKNN 推理封装类，支持零拷贝 DMA 输入和传统 cv::Mat 输入。
  */
 class RKNNDetector
@@ -62,11 +87,12 @@ class RKNNDetector
 		int n_input_  = 0;
 		int n_output_ = 0;
 
-		// 仅保存 boxes 和 logits 的属性（用于零拷贝设置）
+		std::vector<rknn_tensor_attr> output_attrs_;  // 全部输出张量属性
 		rknn_tensor_attr boxes_attr_;
 		rknn_tensor_attr logits_attr_;
 		int boxes_idx_  = -1;
 		int logits_idx_ = -1;
+		std::vector<std::vector<float>> output_buffers_;  // 输出预分配缓冲（避免每帧动态分配）
 
 		// 加载模型文件
 		unsigned char* load_model(const char* filename, int* model_size);

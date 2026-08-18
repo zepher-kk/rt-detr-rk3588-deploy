@@ -91,7 +91,7 @@ int rga_format_bpp(int format)
 			return 1;                  // Y plane 每像素1字节，UV合起来也平均1字节
 
 		default:
-			return 3;                  // fallback： RK_FORMAT_RGB_888 | RK_FORMAT_BGR_888
+			return 3;                  // 默认按 3 字节每像素处理（RGB888/BGR888 等）
 	}
 }
 
@@ -278,7 +278,7 @@ bool DmaBufferPool::alloc_one_drm(DmaBuffer& out)
 	out.handle  = create_req.handle;
 	out.drm_fd  = drm_fd;
 
-	// 调试输出（可选）
+	// 记录分配信息（含 DRM 实际 stride）
 	LOG(MOD_DRM, LOG_INFO) << "Allocated: size=" << out.size << " stride=" << out.stride << "\n";
 
 	return true;

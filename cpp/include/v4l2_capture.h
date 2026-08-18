@@ -28,7 +28,7 @@
 // 【工作原理】
 //   1. open("/dev/videoX") 打开 V4L2 设备
 //   2. VIDIOC_QUERYCAP 查询能力
-//   3. VIDIOC_S_FMT 协商格式（优先 BGR3 / YUYV / MJPEG）
+//   3. VIDIOC_S_FMT 协商格式（优先 BGR3 / RGB3 / YUYV；MJPG 等压缩格式走 OpenCV 回退）
 //   4. VIDIOC_REQBUFS 请求 N 个 MMAP buffer（V4L2_MEMORY_MMAP）
 //   5. VIDIOC_QBUF 入队所有 buffer（初始化）
 //   6. VIDIOC_STREAMON 启动流

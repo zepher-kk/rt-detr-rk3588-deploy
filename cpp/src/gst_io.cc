@@ -38,12 +38,12 @@ struct GstVideoReader::Impl
 	bool        opened      = false;
 	guint64     prev_pts    = 0;
 	bool        have_prev_pts = false;
-	// 【任务 4 追加迭代】实测平均帧率统计（两遍法）
+	// 实测平均帧率统计（两遍法用）
 	guint64     first_pts   = GST_CLOCK_TIME_NONE;
 	guint64     last_pts    = GST_CLOCK_TIME_NONE;
 	int         frame_count = 0;
 	bool        caps_fps_valid = false;
-	// 【任务 4 迭代 4】PTS 间隔众数直方图（VFR 视频用众数估计帧率，抗单帧抖动）
+	// PTS 间隔众数直方图（VFR 视频用众数估计帧率，抗单帧抖动）
 	int         pts_hist[241] = {0};
 };
 
@@ -58,7 +58,7 @@ bool GstVideoReader::open(const std::string& path)
 	std::string ext = path.substr(path.find_last_of('.') + 1);
 	for (auto& c : ext) c = (char)tolower((unsigned char)c);
 
-	// 【任务 4 迭代 3】按扩展名选择候选链路（容器 + 编解码；H.264 失败自动重试 H.265）
+	// 按扩展名选择候选链路（容器 + 编解码；H.264 失败自动重试 H.265）
 	std::vector<std::string> candidates;
 	const std::string src = "filesrc location=\"" + path + "\" ! ";
 	if (ext == "jpg" || ext == "jpeg")
@@ -160,7 +160,7 @@ bool GstVideoReader::try_start_pipeline(const std::string& desc, bool verify_fra
 			gst_object_unref(pipe);
 			return false;
 		}
-		// 【任务 4 迭代 5 修复】open 阶段即从出帧 sample 的 caps 解析帧率：
+		// open 阶段即从出帧 sample 的 caps 解析帧率：
 		// 此前 caps_fps_valid 仅在 read() 里置位，而 main 的两遍法判断发生在 open 后、
 		// 首次 read 前 → 所有视频（含 CFR）都被误判为 VFR 走全量两遍解码
 		// （长视频如 300s/6000 帧需先等 probe 解码完才开 VideoWriter）。
@@ -264,7 +264,7 @@ bool GstVideoReader::read(cv::Mat& frame)
 		std::string f = fmt;
 		if (f == "NV12" && map.size >= (size_t)w * h * 3 / 2)
 		{
-			// 【修复】mppvideodec 会把高度按 16 对齐（如 1080→1088），caps 只报 1080；
+			// mppvideodec 会把高度按 16 对齐（如 1080→1088），caps 只报 1080；
 			// 若按 1080 找 UV 平面，会把 Y 的 8 行当色度 → 顶部 16 行绿条。
 			// 优先使用 GstVideoMeta 的真实平面偏移/stride，否则按缓冲区大小推断。
 			const unsigned char* yp = map.data;
@@ -399,7 +399,7 @@ struct GstVideoWriter::Impl
 	cv::Size    size     = {0, 0};
 	guint64     frame_index = 0;
 	bool        opened   = false;
-	// 【任务 4 迭代 4】编码质量参数
+	// 编码质量参数
 	std::string rc_mode  = "fixqp";   // 固定 QP：质量优先，避免 CBR 低码率块状模糊
 	int         qp_init  = 26;        // QP 越小越清晰（24~30 为常用清晰区间）
 	std::string profile  = "high";    // CABAC，同码率下画质优于 baseline
@@ -488,7 +488,7 @@ bool GstVideoWriter::open(const std::string& path, double fps, cv::Size size)
 		gst_object_unref(enc);
 	}
 
-	// 【任务 4 迭代 4】显式声明 BT.709 limited 色彩学：
+	// 显式声明 BT.709 limited 色彩学：
 	// 否则 mpph264enc 会把 appsrc 默认 sRGB 色彩学直接写进 H.264 VUI
 	// （color_space=gbr / color_range=pc），解码器按错误矩阵还原导致对比度被压。
 	GstCaps* caps = gst_caps_new_simple("video/x-raw",
