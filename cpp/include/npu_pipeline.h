@@ -9,9 +9,11 @@
 #include <map>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <opencv2/opencv.hpp>
 
 #include "types.h"
+#include "postprocess.h"
 #include "rknn_detector.h"
 #include "rknn_api.h"
 #include "gst_io.h"
@@ -135,6 +137,11 @@ class PipelineManager
 		int               num_npu_workers_;
 		float             conf_thres_ = 0.45f;
 		rknn_core_mask    npu_mask_;          // NPU核心掩码
+		// 置信度阈值配置（全局 + 可选按类）；默认不启用按类阈值，全部使用全局 -c
+		ConfConfig        conf_cfg_;
+		bool              conf_cfg_set_ = false;
+		// 批量图片模式复用的独立 NPU context（懒加载：模型只在首帧加载一次）
+		std::unique_ptr<RKNNDetector> img_detector_;
 
 		// 视频输出（延迟初始化）
 		std::string       video_output_path_;
@@ -213,6 +220,35 @@ class PipelineManager
 		 * @return true 成功；false 输入为空/模型不可用/推理失败
 		 */
 		bool detect_image(const cv::Mat& src, cv::Mat& out);
+
+		/**
+		 * @brief 批量图片模式：复用同一 NPU context 的顺序单帧检测。
+		 *
+		 * 与 detect_image() 的区别：模型只在首帧 init 一次，后续帧复用同一
+		 * context，避免逐图重复加载模型；用于大规模离线评估（批量导出检测框）。
+		 * @param src     输入图片（BGR）
+		 * @param results 输出：后处理解码后的检测结果（score 为模型原始输出）
+		 * @param out     可选：绘制检测框的输出图片；传 nullptr 表示不画框
+		 * @return true 成功；false 输入为空/模型不可用/预处理或推理失败
+		 */
+		bool detect_image_reuse(const cv::Mat& src, std::vector<DetectResult>& results,
+		                        cv::Mat* out = nullptr);
+
+		/**
+		 * @brief 设置置信度阈值配置（全局 + 可选按类阈值）。
+		 *
+		 * 传入后对全部解码路径（视频 worker / 单图 / 批量图片）生效；
+		 * 不调用则保持 `-c/--conf` 的全局阈值行为。
+		 * @param cfg 阈值配置（见 postprocess.h 的 ConfConfig）
+		 */
+		void set_conf_config(const ConfConfig& cfg)
+		{
+			conf_cfg_ = cfg;
+			conf_cfg_set_ = true;
+		}
+
+		//!< 当前置信度阈值配置（全局阈值 + 可选按类阈值）
+		const ConfConfig& conf_config() const { return conf_cfg_; }
 
 		/**
 		 * @brief 设置输出视频文件路径。

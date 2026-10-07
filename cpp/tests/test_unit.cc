@@ -955,6 +955,98 @@ void test_gst_vfr_avg_fps()
 }
 
 // ============================================================================
+// 测试 28: 按类置信度阈值（ConfConfig / parse_conf_class / apply_conf_profile）
+// ============================================================================
+void test_conf_class_parse()
+{
+	TEST("按类阈值规格串解析");
+
+	ConfConfig cfg;
+	cfg.reset(-0.13f);
+
+	std::string err;
+	ASSERT_TRUE(parse_conf_class("0:-0.40,3:0.00, 9:-0.55", cfg, &err), "合法规格串应解析成功");
+	ASSERT_TRUE(cfg.per_class_set, "解析成功后应启用按类阈值");
+	ASSERT_TRUE(std::fabs(cfg.per_class[0] - (-0.40f)) < 1e-6f, "类别0阈值错误");
+	ASSERT_TRUE(std::fabs(cfg.per_class[3] - 0.00f) < 1e-6f, "类别3阈值错误");
+	ASSERT_TRUE(std::fabs(cfg.per_class[9] - (-0.55f)) < 1e-6f, "类别9阈值错误");
+	ASSERT_TRUE(std::fabs(cfg.per_class[1] - (-0.13f)) < 1e-6f, "未列出的类别应保持全局阈值");
+	ASSERT_TRUE(std::fabs(cfg.threshold_for(3) - 0.00f) < 1e-6f, "threshold_for 未按类生效");
+
+	// 非法输入
+	ConfConfig bad;
+	bad.reset(0.45f);
+	ASSERT_TRUE(!parse_conf_class("5", bad, &err), "缺少冒号应失败");
+	ASSERT_TRUE(!parse_conf_class("12:0.1", bad, &err), "类别越界应失败");
+	ASSERT_TRUE(!parse_conf_class("3:abc", bad, &err), "阈值非数字应失败");
+	ASSERT_TRUE(!parse_conf_class("", bad, &err), "空串应失败");
+
+	// 预设档位
+	ConfConfig prof;
+	ASSERT_TRUE(apply_conf_profile("balanced", -0.13f, prof, &err), "balanced 档位应可用");
+	ASSERT_TRUE(!prof.per_class_set, "balanced 不应启用按类阈值");
+	ASSERT_TRUE(std::fabs(prof.threshold_for(3) - (-0.13f)) < 1e-6f, "balanced 应等于全局阈值");
+	ASSERT_TRUE(apply_conf_profile("recall", -0.13f, prof, &err), "recall 档位应可用");
+	ASSERT_TRUE(prof.per_class_set, "recall 应启用按类阈值");
+	ASSERT_TRUE(std::fabs(prof.per_class[3] - 0.00f) < 1e-6f, "recall 档位 Car 阈值应为 0.00");
+	ASSERT_TRUE(std::fabs(prof.per_class[2] - (-0.90f)) < 1e-6f, "recall 档位 Bicycle 阈值应为 -0.90");
+	ASSERT_TRUE(!apply_conf_profile("unknown", -0.13f, prof, &err), "未知档位应失败");
+
+	PASS();
+}
+
+// ============================================================================
+// 测试 29: 按类阈值对解码过滤结果的影响
+// ============================================================================
+void test_decode_with_class_conf()
+{
+	TEST("按类阈值解码行为");
+
+	float boxes[300 * 4];
+	float scores[300 * 10];
+	memset(boxes, 0, sizeof(boxes));
+	// 所有类别分数填 -100（远低于任何阈值），再显式设置被测框
+	for (int i = 0; i < 300 * 10; ++i) scores[i] = -100.0f;
+
+	// 框0：类别 3（Car），分数 -0.05 —— 高于全局 -0.13，但低于按类阈值 0.00 → 按类阈值下应被过滤
+	boxes[0] = 0.5f; boxes[1] = 0.5f; boxes[2] = 0.2f; boxes[3] = 0.2f;
+	scores[3] = -0.05f;
+
+	// 框1：类别 0（Pedestrian），分数 -0.30 —— -0.30 > -0.40 → 应保留
+	boxes[4] = 0.3f; boxes[5] = 0.3f; boxes[6] = 0.1f; boxes[7] = 0.1f;
+	scores[10 + 0] = -0.30f;
+
+	// 框2：类别 2（Bicycle），分数 -0.50 —— -0.50 > -0.90 → 应保留
+	boxes[8] = 0.7f; boxes[9] = 0.7f; boxes[10] = 0.1f; boxes[11] = 0.1f;
+	scores[20 + 2] = -0.50f;
+
+	// 未启用按类阈值：使用全局阈值 -0.13 → 仅框0(-0.05)保留，框1(-0.30)/框2(-0.50) 被过滤
+	std::vector<DetectResult> base =
+	    decode_rtdetr_output(boxes, scores, 300, 640, 480, -0.13f);
+	ASSERT_EQ((int)base.size(), 1, "全局阈值 -0.13 下应仅保留框0");
+	ASSERT_EQ(base[0].class_id, 3, "全局阈值下保留的应为类别 3");
+
+	// 启用按类阈值：框0 被 Car=0.00 过滤，框1（Pedestrian=-0.40）、框2（Bicycle=-0.90）保留
+	ConfConfig cfg;
+	cfg.reset(-0.13f);
+	std::string err;
+	ASSERT_TRUE(parse_conf_class("0:-0.40,2:-0.90,3:0.00", cfg, &err), "规格串应解析成功");
+	std::vector<DetectResult> per = decode_rtdetr_output(boxes, scores, 300, 640, 480, -0.13f,
+	                                                     NUM_CLASSES, &cfg);
+	ASSERT_EQ((int)per.size(), 2, "按类阈值下应保留 2 个目标");
+	bool has0 = false, has2 = false, has3 = false;
+	for (const auto& r : per)
+	{
+		if (r.class_id == 0) has0 = true;
+		if (r.class_id == 2) has2 = true;
+		if (r.class_id == 3) has3 = true;
+	}
+	ASSERT_TRUE(has0 && has2 && !has3, "保留类别应为 Pedestrian/Bicycle，且 Car 被按类阈值过滤");
+
+	PASS();
+}
+
+// ============================================================================
 // 主函数
 // ============================================================================
 int main()
@@ -974,6 +1066,8 @@ int main()
 
 	test_postprocess_decode();
 	test_postprocess_edge_cases();
+	test_conf_class_parse();
+	test_decode_with_class_conf();
 	test_resolve_output_indices();
 	test_rknn_zero_copy_matches_infer_only();
 

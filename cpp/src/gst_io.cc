@@ -160,10 +160,9 @@ bool GstVideoReader::try_start_pipeline(const std::string& desc, bool verify_fra
 			gst_object_unref(pipe);
 			return false;
 		}
-		// open 阶段即从出帧 sample 的 caps 解析帧率：
-		// 此前 caps_fps_valid 仅在 read() 里置位，而 main 的两遍法判断发生在 open 后、
-		// 首次 read 前 → 所有视频（含 CFR）都被误判为 VFR 走全量两遍解码
-		// （长视频如 300s/6000 帧需先等 probe 解码完才开 VideoWriter）。
+		// open 阶段即从出帧 sample 的 caps 解析帧率，并置位 caps_fps_valid：
+		// 调用方的 VFR 两遍法判断发生在 open 之后、首次 read 之前，必须在此完成解析，
+		// 否则 CFR 视频会被误判为 VFR，走全量两遍解码（长视频需先解码完才开 VideoWriter）。
 		GstCaps* pcaps = gst_sample_get_caps(probe);
 		if (pcaps)
 		{

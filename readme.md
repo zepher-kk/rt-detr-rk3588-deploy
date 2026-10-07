@@ -164,7 +164,7 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 | 预处理 | OpenCV CPU `resize+cvtColor` | RGA 硬件加速（DMA→DMA / virt→DMA）+ stride 安全回退 |
 | 后处理 | 纯 C++ 解码 | NEON SIMD 加速 |
 | 日志 | 散落打印 | 模块化级联 logger（`-G` 0~8） |
-| 新增能力 | - | 图片模式、NPU 多核绑定、实时显示、帧率覆盖、VFR 两遍法、健壮性熔断 |
+| 新增能力 | - | 图片/批量图片模式、按类阈值、NPU 多核绑定、实时显示、帧率覆盖、VFR 两遍法、健壮性熔断 |
 
 #### 核心更新内容
 
@@ -184,6 +184,8 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 - 📷 **USB 摄像头多格式支持**：V4L2 自动协商 BGR3/RGB3/YUYV，YUYV 帧走 RGA/CPU 转换回退；`read_frame` 带超时等待与 buffer 生命周期加固，支持优雅退出。
 - 🎨 **自适应画框与固定调色板**：线宽/字号随输入分辨率线性缩放并限幅，小目标只画细框不画文字；颜色按类别固定（确定性调色板），便于观察与调试。
 - ⚙️ **推理输出预分配**：RKNN 输出张量在 `init` 时按元素数预分配，推理 `is_prealloc` 复用，避免每帧动态分配。
+- 📊 **批量图片评估模式（`--image-list` / `--dump-det`）**：单次加载模型并复用同一 NPU context 顺序处理清单中的图片（模型仅首帧加载），按 `<stem> <class_id> <score> <x1> <y1> <x2> <y2>` 逐框导出，便于 mAP 等离线精度评估；指定 `-o` 时额外输出 `<stem>_det.jpg` 抽查图。
+- 🎯 **按类置信度阈值（`--profile` / `--conf-class`）**：可为 VisDrone 10 类分别设定生效阈值。`balanced` 沿用全局阈值；`recall` 使用 VisDrone-2019-DET val（548 张、IoU≥0.5、宏平均 F1 最优）逐类标定向量；也可用 `--conf-class "0:-0.40,3:0.00,9:-0.55"` 自定义，全流程（视频/单图/批量图片）一致生效。
 - ⚡ **NPU 多核绑定**：`rknn_set_core_mask` + `--npu-cores auto|0|1|2|0,1|0,1,2`，配合多线程流水线按核心分配推理线程。
 - 📦 **构建依赖**：CMake 新增 `gstreamer-1.0 / gstreamer-app-1.0 / gstreamer-video-1.0` 依赖（含 rockchipmpp 插件），其余同 V3 基础（C++17、-O3/OpenMP/NEON、`librga/libdrm/libv4l2`、`RK3588_TOOLCHAIN` 交叉编译）。
 
@@ -195,7 +197,7 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 | 最佳性能 `-p 2 -n 14 -P 3` | **~16.0** | ~394% | ~1650 MB | NPU 3 核满载（基线 2） |
 | 甜点位 `-p 2 -n 8 -P 3` | 15.61 | 365% | 953 MB | CPU -15% / 内存 -36% / FPS 仅 -3% |
 
-修复后全链路实测（`-p 2 -n 8 -P 3 -c -0.13f`）：特殊 480×332@60 → **16.23 FPS / 321% / 827MB**；cars.mp4 720p → **15.81 FPS / 332% / 954MB**；1080p → **15.37 FPS / 370% / 1152MB**。图片模式 uav.jpg 单图（含模型加载）约 **293ms**，检出 38 目标，与 V2 原版一致。单元测试 **29/29**（含 VFR 帧率估算、1080p 无绿条、模型加载失败不挂起、YUYV 转换、自适应画框、丢旧保新队列等回归用例）。
+修复后全链路实测（`-p 2 -n 8 -P 3 -c -0.13f`）：特殊 480×332@60 → **16.23 FPS / 321% / 827MB**；cars.mp4 720p → **15.81 FPS / 332% / 954MB**；1080p → **15.37 FPS / 370% / 1152MB**。图片模式 uav.jpg 单图（含模型加载）约 **293ms**，检出 38 目标，与 V2 原版一致。单元测试 **31/31**（含 VFR 帧率估算、1080p 无绿条、模型加载失败不挂起、YUYV 转换、自适应画框、丢旧保新队列、按类阈值解析与解码等回归用例）。
 
 #### V3 快速上手（以 V3 为准）
 
@@ -225,8 +227,14 @@ cmake .. && make -j4
 # 7. 仅性能测试 + 精简日志（-G 0 只输出错误与运行报告）
 ./rtdetr_pipeline -m rtdetr_r18.rknn -v test.mp4 -G 0
 
-# 8. 查看完整帮助
+# 8. 批量图片评估（复用同一 NPU context，导出检测框用于 mAP 评估）
+./rtdetr_pipeline -m rtdetr_r18.rknn --image-list val_list.txt --dump-det det.txt --profile recall -c -0.13f
+
+# 9. 自定义按类阈值（仅对列出的类别覆盖全局 -c）
+./rtdetr_pipeline -m rtdetr_r18.rknn -i uav.jpg -o result.jpg --conf-class "0:-0.40,3:0.00,9:-0.55"
+
+# 10. 查看完整帮助
 ./rtdetr_pipeline -h
 ```
 
-> 模型输出未归一化，`-c` 阈值可取 > -1（如 `-0.13f`）；`-i` 与 `-v` 互斥；更多参数见 `./rtdetr_pipeline -h`。
+> 模型输出未归一化，`-c` 阈值可取 > -1（如 `-0.13f`）；`-i` 与 `-v` 互斥，`--image-list` 为批量图片模式；`--dump-det` 导出格式为 `<stem> <class_id> <score> <x1> <y1> <x2> <y2>`；更多参数见 `./rtdetr_pipeline -h`。
