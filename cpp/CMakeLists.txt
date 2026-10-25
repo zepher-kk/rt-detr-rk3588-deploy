@@ -4,6 +4,7 @@ project(rtdetr_rk3588_rga_dma CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(RTDETR_INPUT_SIZE 640 CACHE STRING "Square model input size (for example 640 or 512)")
 
 # ============================================================================
 # 编译选项
@@ -84,6 +85,7 @@ set(SOURCES
 # 主可执行文件
 # ============================================================================
 add_executable(rtdetr_pipeline ${SOURCES})
+target_compile_definitions(rtdetr_pipeline PRIVATE RTDETR_INPUT_SIZE=${RTDETR_INPUT_SIZE})
 
 # ============================================================================
 # 链接库

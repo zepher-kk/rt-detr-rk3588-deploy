@@ -334,12 +334,35 @@ void test_resolve_output_indices()
 	PASS();
 }
 
+void test_resolve_variable_queries()
+{
+	TEST("resolve variable query outputs");
+
+	std::vector<rknn_tensor_attr> attrs(5);
+	for (auto& a : attrs) memset(&a, 0, sizeof(a));
+	attrs[0].n_elems = 2100;
+	attrs[1].n_elems = 600;
+	attrs[2].n_elems = 1500;
+	attrs[3].n_elems = 600;
+	attrs[4].n_elems = 1500;
+
+	int boxes_idx = -1;
+	int logits_idx = -1;
+	resolve_rtdetr_output_indices(attrs, boxes_idx, logits_idx);
+
+	ASSERT_EQ(boxes_idx, 3, "150-query boxes index mismatch");
+	ASSERT_EQ(logits_idx, 4, "150-query logits index mismatch");
+	ASSERT_EQ(infer_rtdetr_num_classes(600, 1500), 10, "class inference failed");
+	ASSERT_EQ(infer_rtdetr_num_classes(600, 1400), -1, "invalid shape must fail");
+	PASS();
+}
+
 void test_rknn_zero_copy_matches_infer_only()
 {
 	TEST("rknn_zero_copy_matches_infer_only");
 
-	const char* model_path = "/home/neardi/Workspace_Codex/models/RT-DETR-RK3588-Models/.rknn/rtdetr_i8.rknn";
-	const char* image_path = "/home/neardi/Workspace_Codex/img/uav.jpg";
+	const char* model_path = "/path/to/model.rknn";
+	const char* image_path = "/path/to/image.jpg";
 	std::ifstream mf(model_path, std::ios::binary);
 	if (!mf.good())
 	{
@@ -780,7 +803,7 @@ void test_gst_video_writer()
 {
 	TEST("GstVideoWriter 硬编(H.264)");
 
-	const char* out_path = "/home/neardi/Workspace_Codex/rk3588_-rt-detr/cpp_DMSJ/build/ut_gst_out.mp4";
+	const char* out_path = "/path/to/test_output.mp4";
 	GstVideoWriter writer;
 	ASSERT_TRUE(writer.open(out_path, 30.0, cv::Size(320, 240)), "GstVideoWriter open 失败");
 
@@ -810,7 +833,7 @@ void test_gst_video_reader()
 	TEST("GstVideoReader 硬解(cars_2s)");
 
 	GstVideoReader reader;
-	ASSERT_TRUE(reader.open("/home/neardi/Workspace_Codex/img/cars_2s.mp4"), "GstVideoReader open 失败");
+	ASSERT_TRUE(reader.open("/path/to/sample.mp4"), "GstVideoReader open 失败");
 	cv::Mat frame;
 	int count = 0;
 	while (count < 10 && reader.read(frame))
@@ -835,7 +858,7 @@ void test_gst_image_decode()
 	TEST("GstVideoReader JPEG 硬解(uav.jpg)");
 
 	GstVideoReader reader;
-	ASSERT_TRUE(reader.open("/home/neardi/Workspace_Codex/img/uav.jpg"), "JPEG open 失败");
+	ASSERT_TRUE(reader.open("/path/to/image.jpg"), "JPEG open 失败");
 	cv::Mat frame;
 	ASSERT_TRUE(reader.read(frame), "JPEG 读帧失败");
 	LOG(MOD_TEST, LOG_INFO) << "JPEG dims=" << frame.cols << "x" << frame.rows << "\n";
@@ -854,7 +877,7 @@ void test_gst_1080p_no_green_bar()
 	TEST("GstVideoReader 1080p 无顶部绿条");
 
 	GstVideoReader reader;
-	ASSERT_TRUE(reader.open("/home/neardi/Workspace_Codex/img/test_people_small_little_18s.mp4"),
+	ASSERT_TRUE(reader.open("/path/to/sample_1080p.mp4"),
 	            "1080p open 失败");
 	cv::Mat frame;
 	ASSERT_TRUE(reader.read(frame), "1080p 读帧失败");
@@ -886,7 +909,7 @@ void test_gst_multi_format()
 {
 	TEST("GstVideoReader 多格式(avi/hevc)");
 
-	const char* build = "/home/neardi/Workspace_Codex/rk3588_-rt-detr/cpp_DMSJ/build/";
+	const char* build = "/path/to/build/";
 	std::string avi = std::string(build) + "ut_multi.avi";
 	std::string hevc = std::string(build) + "ut_multi_hevc.mp4";
 
@@ -938,7 +961,7 @@ void test_pipeline_init_failure_no_hang()
 void test_gst_vfr_avg_fps()
 {
 	TEST("GstVideoReader VFR 平均帧率估算");
-	const char* vfr = "/home/neardi/Workspace_Codex/img/cars-from uav_Unconventional Size_.mp4";
+	const char* vfr = "/path/to/variable_frame_rate.mp4";
 	GstVideoReader r;
 	ASSERT_TRUE(r.open(vfr), "VFR 视频打开失败");
 	ASSERT_TRUE(!r.caps_fps_authoritative(), "VFR 源不应有权威 caps 帧率");
@@ -955,7 +978,7 @@ void test_gst_vfr_avg_fps()
 }
 
 // ============================================================================
-// 测试 28: 按类置信度阈值（ConfConfig / parse_conf_class / apply_conf_profile）
+// 测试: 按类置信度阈值（ConfConfig / parse_conf_class / apply_conf_profile）
 // ============================================================================
 void test_conf_class_parse()
 {
@@ -995,9 +1018,6 @@ void test_conf_class_parse()
 	PASS();
 }
 
-// ============================================================================
-// 测试 29: 按类阈值对解码过滤结果的影响
-// ============================================================================
 void test_decode_with_class_conf()
 {
 	TEST("按类阈值解码行为");
@@ -1008,25 +1028,25 @@ void test_decode_with_class_conf()
 	// 所有类别分数填 -100（远低于任何阈值），再显式设置被测框
 	for (int i = 0; i < 300 * 10; ++i) scores[i] = -100.0f;
 
-	// 框0：类别 3（Car），分数 -0.05 —— 高于全局 -0.13，但低于按类阈值 0.00 → 按类阈值下应被过滤
+	// 框0：类别 3（Car），分数 -0.05 —— 高于全局 -0.13，但低于按类阈值 0.00 → 应被按类阈值过滤
 	boxes[0] = 0.5f; boxes[1] = 0.5f; boxes[2] = 0.2f; boxes[3] = 0.2f;
 	scores[3] = -0.05f;
 
-	// 框1：类别 0（Pedestrian），分数 -0.30 —— -0.30 > -0.40 → 应保留
+	// 框1：类别 0（Pedestrian），分数 -0.30 —— 高于按类阈值 -0.40 → 应保留
 	boxes[4] = 0.3f; boxes[5] = 0.3f; boxes[6] = 0.1f; boxes[7] = 0.1f;
 	scores[10 + 0] = -0.30f;
 
-	// 框2：类别 2（Bicycle），分数 -0.50 —— -0.50 > -0.90 → 应保留
+	// 框2：类别 2（Bicycle），分数 -0.50 —— 低于按类阈值 -0.90? 否：-0.50 > -0.90 → 应保留
 	boxes[8] = 0.7f; boxes[9] = 0.7f; boxes[10] = 0.1f; boxes[11] = 0.1f;
 	scores[20 + 2] = -0.50f;
 
-	// 未启用按类阈值：使用全局阈值 -0.13 → 仅框0(-0.05)保留，框1(-0.30)/框2(-0.50) 被过滤
+	// 无按类配置（旧行为）：全局阈值 -0.13 → 仅框0(0.10)保留，框1(-0.30)/框2(-0.50) 被过滤
 	std::vector<DetectResult> base =
 	    decode_rtdetr_output(boxes, scores, 300, 640, 480, -0.13f);
 	ASSERT_EQ((int)base.size(), 1, "全局阈值 -0.13 下应仅保留框0");
 	ASSERT_EQ(base[0].class_id, 3, "全局阈值下保留的应为类别 3");
 
-	// 启用按类阈值：框0 被 Car=0.00 过滤，框1（Pedestrian=-0.40）、框2（Bicycle=-0.90）保留
+	// 启用按类阈值：框0 被 Car=0.00 过滤，框1（<-0.40? -0.30>-0.40 保留）、框2（<-0.90? -0.50>-0.90 保留）
 	ConfConfig cfg;
 	cfg.reset(-0.13f);
 	std::string err;
@@ -1069,6 +1089,7 @@ int main()
 	test_conf_class_parse();
 	test_decode_with_class_conf();
 	test_resolve_output_indices();
+	test_resolve_variable_queries();
 	test_rknn_zero_copy_matches_infer_only();
 
 	test_bounded_queue();

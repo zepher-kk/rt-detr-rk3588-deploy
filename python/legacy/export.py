@@ -97,9 +97,9 @@ print("✅ 成功注入 nn.Linear 静态扁平化补丁！")
 # ==========================================
 # 主流程：只生成唯一的 ONNX 模型
 # ==========================================
-pt_path = r"D:\learn\detr\UAV-DETR-rt\runs\train\rtdetr2\weights\best.pt"
+pt_path = r"/path/to/best.pt"
 # 名字越简单越好，不要 raw 也不要 sim 了
-onnx_final_path = r"D:\learn\detr\UAV-DETR-rt\runs\train\rtdetr2\weights\best_rtdetr_npu.onnx"
+onnx_final_path = r"/path/to/best_rtdetr_npu.onnx"
 
 print("\n1. 加载 PyTorch 模型...")
 model = RTDETR(pt_path)

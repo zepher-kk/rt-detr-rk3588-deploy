@@ -1,4 +1,5 @@
 # 编译产物
+/build/
 cpp/build/
 cpp/install/
 

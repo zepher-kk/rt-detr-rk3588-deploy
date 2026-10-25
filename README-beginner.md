@@ -1,8 +1,30 @@
 # 🚀 RT-DETR on RK3588: 高性能边缘部署实战
 
+> 本文是面向初次使用者的补充教程。项目主文档和当前支持状态见 [README.md](README.md)。
+
+简体中文 | [English](README-beginner.en.md)
+
 [![Platform: RK3588](https://img.shields.io/badge/Platform-RK3588-blue.svg)](https://www.rock-chips.com/)
 [![Framework: RT-DETR](https://img.shields.io/badge/Framework-RT--DETR-orange.svg)]()
 [![Language: C++/Python](https://img.shields.io/badge/Language-C++%20%7C%20Python-green.svg)]()
+
+## 核心成果
+
+**FPS 突破 25 FPS，基本解决 INT8 量化精度损失，实现模型体积、精度与性能同步优化。**
+
+| 格式 | 模型体积 | AP | AP50 | AP75 | 1080p FPS |
+|---|---:|---:|---:|---:|---:|
+| 原始 PT | 241.95 MB | 0.3060* | 0.5010* | — | — |
+| FP32 ONNX | 80.85 MB | 0.2180 | 0.3725 | 0.2208 | — |
+| FP16 RKNN | 55.68 MB | 0.2096 | 0.3659 | 0.2081 | 10.02 |
+| **部署 INT8（150 query）** | **28.43 MB** | **0.2049** | **0.3556** | **0.2024** | **25.04 ± 0.09** |
+
+> `*` PT 的 AP 数据为原始论文参考口径，不与下列端到端结果直接混比。
+> FP32 ONNX、FP16 RKNN 与部署 INT8 使用同一套后处理与精度评测口径。
+
+相对 FP16，部署 INT8 的体积减少 **48.9%**，AP 保留 **97.8%**，FPS 提升
+**149.9%**；相对 FP32 ONNX，体积减少 **64.8%**，AP 保留 **94.0%**；相对
+原始 PT，模型体积减少 **88.3%**。
 
 本项目致力于将先进的 **RT-DETR (Real-Time DEtection TRansformer)** 算法部署到 **RK3588** 边缘计算平台上。
 
@@ -34,6 +56,8 @@
 ## 🔄 2. 模型转换 (Model Conversion)
 **[模型下载](https://drive.google.com/drive/folders/1zS1hq9Hf5GdOKOKwz2djPmIrUm8cQLn_?usp=sharing),包含了pt，onnx，rknn模型**
 
+**最新模型下载：[123 云盘 - rtdetr_i8.rknn](https://1856090596.share.123pan.cn/123pan/AyyRvd-SsyZv?pwd=XFT1#)**
+
 RT-DETR 采用一对一匈牙利匹配，**直接输出 300 个预测框**。
 > ⚠️ **注意**：导出 ONNX 时请务必使用 **静态 Shape (Static Shape)**，并去掉所有后处理 NMS 节点，保持最纯粹的张量输出（例如 `[1, 300, 14]`）。
 
@@ -41,34 +65,34 @@ RT-DETR 采用一对一匈牙利匹配，**直接输出 300 个预测框**。
 在部署了 `RKNN-Toolkit2` 的 PC 上，编写并运行转换脚本（支持 INT8 量化或 FP16）：
 ```bash
 # 示例：通过 Toolkit2 将 onnx 转为 rknn
-python convert.py <path_to_onnx> rk3588 fp16 <output_name.rknn>
+python python/legacy/convert.py <path_to_onnx> rk3588 fp16 <output_name.rknn>
 python
 测试单张图片（安静出图，不测速）：
 Bash
-python infer.py --model_path rtdetr.rknn   test.jpg --conf_thres 0.5
+python python/runtime/infer.py --model_path rtdetr.rknn --source test.jpg --conf_thres 0.5
 测试本地视频（狂飙出图，动态打印 FPS）：
 Bash
-python infer.py --model_path rtdetr.rknn --source demo.mp4 --img_size 640
+python python/runtime/infer.py --model_path rtdetr.rknn --source demo.mp4 --img_size 640
 接入 USB 摄像头实时测试：
 Bash
-python infer.py --model_path rtdetr.rknn --source 0
+python python/runtime/infer.py --model_path rtdetr.rknn --source 0
 ```
 🐍 3. Python 推理 (Python Inference)
 我们提供了高度工程化的 Python 推理脚本，支持 单图、本地视频流、USB 摄像头，并内置动态 FPS 测速。
 
+> 当前 Python 推理脚本仅适配 300 query 输出，暂不兼容 150 query 模型。部署 150 query 模型请使用 C++ 入口。
+
 运行方式：
 
 ```bash
-cd python/
-
 # 1. 单张图片测试 (安静出图)
-python infer.py --model_path ../model/best.rknn --source ../img/uav.jpg --conf_thres 0.45
+python python/runtime/infer.py --model_path model/best.rknn --source img/uav.jpg --conf_thres 0.45
 
 # 2. 本地视频动态测速
-python infer.py --model_path ../model/best.rknn --source ../test.mp4
+python python/runtime/infer.py --model_path model/best.rknn --source test.mp4
 
 # 3. USB 摄像头实时推理 (注意替换实际的 /dev/video 节点)
-python infer.py --model_path ../model/best.rknn --source 21 
+python python/runtime/infer.py --model_path model/best.rknn --source /dev/video0
 检测结果（图片或视频）将自动保存在当前目录下。
 ```
 ⚡ 4. C++ 推理 (C++ Inference)
@@ -132,7 +156,7 @@ C++ 异步流水线：约 7X FPS (3个 NPU 核心满载，性能提升数倍！)
 
 - 🛠️ **模型导出与后处理重构** 
 
-- 全面修复并优化了 `export.py` 的 ONNX 导出逻辑，同时同步重写了配套的张量后处理代码，数据流转更加严谨（具体实现请查阅最新源码）。
+- 全面修复并优化了 `python/legacy/export.py` 的 ONNX 导出逻辑，同时同步重写了配套的张量后处理代码，数据流转更加严谨（具体实现请查阅最新源码）。
 
 - 🎯 **INT8 量化精度修复 & 权重开源** 
 

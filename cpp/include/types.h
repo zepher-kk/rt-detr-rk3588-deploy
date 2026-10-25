@@ -11,11 +11,16 @@
 // ============================================================================
 // 模型输入输出常量（RT-DETR-R18）
 // ============================================================================
-constexpr int INPUT_WIDTH    = 640;
-constexpr int INPUT_HEIGHT   = 640;
+#ifndef RTDETR_INPUT_SIZE
+#define RTDETR_INPUT_SIZE 640
+#endif
+
+constexpr int INPUT_WIDTH    = RTDETR_INPUT_SIZE;
+constexpr int INPUT_HEIGHT   = RTDETR_INPUT_SIZE;
 constexpr int INPUT_CHANNELS = 3;
 constexpr int NUM_CLASSES    = 10;   //!< VisDrone 10 类
 constexpr int NUM_BOXES      = 300;  //!< RT-DETR 固定输出 300 个候选框
+static_assert(INPUT_WIDTH == INPUT_HEIGHT, "RT-DETR deployment requires a square input");
 
 // RT-DETR 输入归一化参数（与 Python 训练时一致）
 // RT-DETR 通常不做均值减法，仅归一化到 [0,1]
@@ -82,7 +87,7 @@ using DmaBufferPtr = std::shared_ptr<DmaBuffer>;
 //
 // 设计要点：
 //   1. src_buf：源 DMA buffer（V4L2 相机零拷贝路径），预处理完成后提前归还采集队列
-//   2. input_buf：RGA 输出 DMA buffer（640x640 RGB），NPU 直接零拷贝读取
+//   2. input_buf：RGA 输出 DMA buffer（INPUT_WIDTH×INPUT_HEIGHT RGB），NPU 直接零拷贝读取
 //   3. orig_img：源图像副本（入队时 clone），用于后处理画框与视频输出
 //   4. 帧包以 shared_ptr 在队列间传递，仅移动所有权，不复制图像数据
 // ============================================================================
@@ -94,7 +99,7 @@ struct FrameBundle
 	DmaBufferPtr    src_buf;                    //!< 源 DMA buffer（任意分辨率 BGR）
 	cv::Mat         orig_img;                   //!< 源 cv::Mat（仅 src_buf 不可用时使用，或用于画框）
 
-	// RGA 输出 / NPU 输入：640x640 RGB DMA buffer
+	// RGA 输出 / NPU 输入：INPUT_WIDTH×INPUT_HEIGHT RGB DMA buffer
 	DmaBufferPtr    input_buf;                  //!< 预处理后的 DMA 缓冲
 
 	// NPU 输出（预分配，避免每帧 malloc/free）

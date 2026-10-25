@@ -121,8 +121,13 @@ bool RKNNDetector::query_io_attrs()
 		return false;
 	}
 
-	// 从 logits 推断类别数(日志)
-	int detected_classes = logits_attr_.n_elems / 300;
+	// 从 boxes/logits 元素数推断 query 数和类别数
+	int detected_classes = infer_rtdetr_num_classes(boxes_attr_.n_elems, logits_attr_.n_elems);
+	if (detected_classes < 0)
+	{
+		LOG(MOD_RKNN, LOG_ERROR) << "FATAL: inconsistent boxes/logits output shapes\n";
+		return false;
+	}
 	LOG(MOD_RKNN, LOG_INFO) << "Detected num_classes from model = " << detected_classes
 	          << " (aligned with NUM_CLASSES=" << NUM_CLASSES << ")\n";
 
@@ -232,7 +237,12 @@ bool RKNNDetector::infer_zero_copy(const DmaBufferPtr& input_buf,
 		memcpy(out_logits.data(), output_buffers_[logits_idx_].data(), logits_count * sizeof(float));
 	}
 	num_boxes = (int)(boxes_count / 4);
-	num_classes = (int)(logits_count / 300);
+	num_classes = infer_rtdetr_num_classes(boxes_count, logits_count);
+	if (num_classes < 0)
+	{
+		rknn_outputs_release(ctx_, n_output_, outputs.data());
+		return false;
+	}
 
 	rknn_outputs_release(ctx_, n_output_, outputs.data());
 	return true;

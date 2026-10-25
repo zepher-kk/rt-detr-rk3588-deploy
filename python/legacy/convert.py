@@ -2,8 +2,8 @@ import sys
 
 from rknn.api import RKNN
 
-DATASET_PATH = '/mnt/d/learn/rknn/rknn_model_zoo/datasets/Visdrone/Visdrone_subset_20.txt'
-DEFAULT_RKNN_PATH = './rtdetr2/weights/best_raw_17.onnx'
+DATASET_PATH = '/path/to/calibration.txt'
+DEFAULT_RKNN_PATH = '/path/to/output.rknn'
 DEFAULT_QUANT = True
 
 
