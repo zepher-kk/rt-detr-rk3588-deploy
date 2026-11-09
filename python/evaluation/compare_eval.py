@@ -97,15 +97,23 @@ def main():
             rb = ref[f'boxes_{ri}']
             bl = board[f'logits_{mi}_{bi}']
             bb = board[f'boxes_{mi}_{bi}']
-            cos.append(float(np.dot(rl.ravel(), bl.ravel()) / (np.linalg.norm(rl) * np.linalg.norm(bl) + 1e-9)))
-            ldiff.append(float(np.abs(rl - bl).max()))
-            bdiff.append(float(np.abs(rb - bb).max()))
+            if rl.shape == bl.shape and rb.shape == bb.shape:
+                cos.append(float(np.dot(rl.ravel(), bl.ravel()) / (np.linalg.norm(rl) * np.linalg.norm(bl) + 1e-9)))
+                ldiff.append(float(np.abs(rl - bl).max()))
+                bdiff.append(float(np.abs(rb - bb).max()))
+            else:
+                cos.append(float('nan'))
+                ldiff.append(float('nan'))
+                bdiff.append(float('nan'))
             r, p, iou = detection_agreement(rl, rb, bl, bb, thres=args.thres)
             recalls.append(r); precisions.append(p); ious.append(iou)
         print(f'===== {model} =====')
-        print(f'  logits cosine : mean {np.mean(cos):.6f}  min {np.min(cos):.6f}')
-        print(f'  logits maxdiff: mean {np.mean(ldiff):.5f}  max {np.max(ldiff):.5f}')
-        print(f'  boxes  maxdiff: mean {np.mean(bdiff):.6f}  max {np.max(bdiff):.6f}')
+        if np.isnan(cos).all():
+            print('  logits cosine : n/a (different query count)')
+        else:
+            print(f'  logits cosine : mean {np.nanmean(cos):.6f}  min {np.nanmin(cos):.6f}')
+            print(f'  logits maxdiff: mean {np.nanmean(ldiff):.5f}  max {np.nanmax(ldiff):.5f}')
+            print(f'  boxes  maxdiff: mean {np.nanmean(bdiff):.6f}  max {np.nanmax(bdiff):.6f}')
         print(f'  det>={args.thres}: recall {np.mean(recalls)*100:.2f}%  precision {np.mean(precisions)*100:.2f}%  meanIoU {np.mean(ious):.4f}')
         if f'timing_{mi}' in board:
             t = board[f'timing_{mi}']

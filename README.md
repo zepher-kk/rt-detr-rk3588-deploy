@@ -1,22 +1,29 @@
-# RT-DETR RK3588 部署 v4.0.0
+# RT-DETR RK3588 部署 v4.0.1
 
 RK3588 上的 RT-DETR 部署工程：FP16 + 原生 GridSample（GPU）+ C++ 多实例流水线。
 
-**单帧 128 ms，3 实例绑核 18.1 FPS，4 实例 18.66 FPS，精度与 PyTorch 一致。**
+**单帧 131 ms，3 实例绑核 17.99 FPS，4 实例 18.53 FPS；全 FP16，decoder 与 PyTorch 一致。**
 
 ## 核心结果
 
 | 指标 | 数值 |
 |---|---|
-| 模型 | `rtdetr_native_tpopt2_mulnpu_fp16.rknn`（FP16，44.4 MB，md5 `33832CF0…`） |
-| 单帧延迟 | **128.4 ms**（`--latency` best，mean 134.3） |
-| 3 实例各绑一核 | **18.06 FPS** |
-| 4 实例（3 核） | **18.66 FPS** |
-| 视频（cars.mp4，3 实例） | **17.65 FPS**，解码仅 4.3 ms/帧 |
-| 精度（conf≥0.45，11 图） | recall 100% / precision 100% / meanIoU 0.9912 |
-| 检出 | 220/220，与 PyTorch FP32 一致 |
+| 模型 | `rtdetr_tpopt2_4d_mulnpu.rknn`（FP16，46.6 MB，无 INT8） |
+| 单帧推理 | **131.0 ms**（p50，150 次）；p95 133.1 ms |
+| 端到端时延 | mean **120.2 ms**，best **116.8 ms**（`--latency`） |
+| 3 实例各绑一核 | **17.99 FPS** |
+| 4 实例（3 核） | **18.53 FPS** |
+| 视频（cars.mp4，3 实例） | **17.63 FPS**，解码仅 3.3 ms/帧 |
+| 精度（conf≥0.45，11 图） | recall **98.22%** / precision 98.62% / meanIoU **0.9805** |
+| 高置信 query | 与 PyTorch 参考框差 ~1e-4，分数差 <1e-3 |
 
 相比 v2 的 Python 实现（7.62 FPS / 131 ms），吞吐提升 **2.4×**，单帧延迟不变。
+
+> **v4.0.1 修复**：v4.0.0 里 RKNN 2.5 会把 decoder 的 6 维广播 `Mul`
+> 编译成**全 0**（采样点塌到参考框中心），导致 decoder 输出错误；
+> 旧 README 的 18.06 FPS / recall 100% 是在这个有缺陷的模型上测的。
+> 现在把网格运算改成 4 维，decoder 正确，速度只掉 0.9 ms。
+> 详见 [6 维 Mul 缺陷](docs/mul-grid-bug.md)。
 
 ## v4 的改进
 
@@ -25,18 +32,18 @@ RK3588 上的 RT-DETR 部署工程：FP16 + 原生 GridSample（GPU）+ C++ 多�
 | 改动 | 收益 |
 |---|---|
 | GridSample 走 GPU（`op_target`） | 替代 Gather 展开，335 ms → 186 ms |
-| decoder Mul 从 CPU 移到 NPU | -24.9 ms（去掉每次 4 ms 的跨设备同步） |
+| 网格运算改 4 维（v4.0.1） | 修掉 6 维 Mul 被编译成 0 的缺陷；Mul 留在 NPU，比放 CPU 省 26 ms |
 | 重写 deformable attention，消掉 12 宽 transpose | -13.1 ms |
 | value 保持 channel-first，消掉布局往返 | -16.6 ms |
 
-输出逐位不变（PyTorch 侧 max diff = 0）。
+ONNX 输出与 PyTorch 逐位相同；板上 decoder 与 PyTorch 高置信 query 差 < 1e-3。
 
 ### 2. 工程层（v4 新增）
 
 | 改动 | 收益 |
 |---|---|
 | C++ 三级流水线（pre → NPU → post，有界队列 + 背压） | 消除流水线气泡 |
-| 每 worker 独立 context，**一实例绑一核** | 7.96 → 18.06 FPS |
+| 每 worker 独立 context，**一实例绑一核** | 7.96 → 18.0 FPS |
 | RGA 预处理（letterbox + BGR→RGB） | 解码/预处理不再占关键路径 |
 | `rknn_set_io_mem` + NEON 自转换 | 去掉 6.8 ms/帧的通用输入转换 |
 | 视频输入（OpenCV/FFmpeg 软解 + 读取线程） | 支持 mp4，仅 -1.3% 吞吐 |
@@ -62,7 +69,8 @@ RK3588 上的 RT-DETR 部署工程：FP16 + 原生 GridSample（GPU）+ C++ 多�
 │   ├── benchmarks.md     全部实测数据
 │   ├── model.md          导出/编译参数与约束
 │   ├── troubleshooting.md 常见报错
-│   └── roadmap.md        v4.1 计划
+│   ├── mul-grid-bug.md   6 维 Mul 缺陷与修复
+│   └── roadmap.md        裁剪模型与 INT8 评估
 └── README.md
 ```
 
@@ -140,13 +148,17 @@ export LD_LIBRARY_PATH=/home/cat/opencl_shim:$LD_LIBRARY_PATH
 
 ```bash
 python python/export/export_transpose_opt.py --weights best.pt --value-nchw \
-    --output model/rtdetr_native_tpopt2.onnx
+    --fold-offset-scale --msda-4d-grid \
+    --output model/rtdetr_tpopt2_4d.onnx
 
 python python/quantize/convert_native_gpu.py \
-    model/rtdetr_native_tpopt2.onnx model/rtdetr_native_tpopt2_mulnpu_fp16.rknn \
+    model/rtdetr_tpopt2_4d.onnx model/rtdetr_tpopt2_4d_mulnpu.rknn \
     --opt-level 0 --disable-rules squeeze_nd_mul,fuse_mul_into_gemm \
     --op-target-map 'GridSample=gpu,Mul=npu'
 ```
+
+> 不要漏掉 `--msda-4d-grid`：没有它时 6 维 Mul 在 NPU 上会输出全 0，
+> 模型能跑、速度也快，但 decoder 结果是错的。
 
 ## 精度验证
 
@@ -159,10 +171,11 @@ Python 推理入口保留在 `python/runtime/infer.py`（300 query，用于回�
 
 ## 已知限制
 
-- **仅 FP16**：GridSample 的 GPU 实现不接受 INT8；模型 44.4 MB
+- **仅 FP16**：GridSample 的 GPU 实现不接受 INT8；模型 46.6 MB。
+  全图无 INT8。`TopK`/`Gather`（query 选择）与 I/O 算子仍跑在 CPU，但精度同为 FP16。
 - **仅 RK3588**：RK356X 官方不支持 GridSample
 - **依赖 OpenCL**：需要导出 `clImportMemoryARM` 的 Mali 库
-- **视频为软解**：解码 4~6 ms/帧，未接 MPP（当前不是瓶颈）
+- **视频为软解**：解码 3~6 ms/帧，未接 MPP（当前不是瓶颈）
 - **长稳未验证**：目前只有 200~300 帧级压测
 
 ## 文档
@@ -171,7 +184,8 @@ Python 推理入口保留在 `python/runtime/infer.py`（300 query，用于回�
 - [基准数据](docs/benchmarks.md)
 - [模型与编译](docs/model.md)
 - [常见问题](docs/troubleshooting.md)
-- [路线图（v4.1 混合量化）](docs/roadmap.md)
+- [6 维 Mul 缺陷与修复](docs/mul-grid-bug.md)
+- [路线图](docs/roadmap.md)
 
 ## 致谢
 

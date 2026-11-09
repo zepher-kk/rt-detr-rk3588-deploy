@@ -19,6 +19,10 @@ def parse_args():
                    help="comma separated Op=device pairs, e.g. 'GridSample=gpu,Mul=gpu'")
     p.add_argument('--disable-rules', default='squeeze_nd_mul',
                    help="comma separated; empty string means no disabled rules")
+    p.add_argument('--mul-cpu-scope', default='none',
+                   choices=['none', 'all'],
+                   help="place all Mul ops on CPU (fallback for models not "
+                        "exported with --msda-4d-grid)")
     return p.parse_args()
 
 
@@ -34,6 +38,11 @@ def main():
                 continue
             key, val = pair.split('=')
             op_target[key.strip()] = val.strip()
+
+    if args.mul_cpu_scope == 'all':
+        if op_target is None:
+            op_target = {}
+        op_target['Mul'] = 'cpu'
 
     print('==== build config ====')
     print('onnx        :', args.onnx)

@@ -27,13 +27,23 @@ def letterbox(img, size=640):
 
 
 def parse(outs):
-    logits = boxes = None
+    """Pick the concatenated decoder output y = (N, 4+classes).
+
+    y is the model's main decoder head: the first 4 columns are boxes, the rest
+    are sigmoid scores, so a single output gives everything. The separate
+    boxes / scores outputs are only used as a fallback.
+    """
     for o in outs:
         sq = np.squeeze(o)
-        if sq.shape == (300, 10):
-            logits = sq.astype(np.float32)
-        elif sq.shape == (300, 4):
+        if sq.ndim == 2 and sq.shape[-1] == 4 + 10:
+            return sq[:, 4:].astype(np.float32), sq[:, :4].astype(np.float32)
+    boxes = logits = None
+    for o in outs:
+        sq = np.squeeze(o)
+        if boxes is None and sq.ndim == 2 and sq.shape[-1] == 4:
             boxes = sq.astype(np.float32)
+        elif logits is None and sq.ndim == 2 and sq.shape[-1] == 10:
+            logits = sq.astype(np.float32)
     return logits, boxes
 
 

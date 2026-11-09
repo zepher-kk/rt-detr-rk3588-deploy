@@ -9,6 +9,7 @@ import sys
 import cv2
 import numpy as np
 import torch
+import torch.nn as nn
 
 DETR_SRC = os.environ.get('UAVDETR_SRC', '/mnt/d/learn/detr/UAV-DETR-rt')
 
@@ -41,14 +42,22 @@ def _flatten(obj):
 
 
 def to_2d(out):
-    """Normalize model outputs to (300,10) logits and (300,4) boxes."""
-    logits = boxes = None
-    for t in _flatten(out):
-        arr = np.squeeze(t.detach().cpu().numpy())
-        if arr.shape == (300, 10):
-            logits = arr
-        elif arr.shape == (300, 4):
+    """Normalize outputs to (N,4) boxes and (N,10) scores.
+
+    Prefer the concatenated decoder output y = (N, 4+classes), where the score
+    columns are already sigmoid probabilities. Fall back to the first matching
+    (N,4)/(N,classes) tensors.
+    """
+    items = [np.squeeze(t.detach().cpu().numpy()) for t in _flatten(out)]
+    for arr in items:
+        if arr.ndim == 2 and arr.shape[-1] == 4 + 10:
+            return arr[:, 4:], arr[:, :4]
+    boxes = logits = None
+    for arr in items:
+        if boxes is None and arr.ndim == 2 and arr.shape[-1] == 4:
             boxes = arr
+        elif logits is None and arr.ndim == 2 and arr.shape[-1] == 10:
+            logits = arr
     return logits, boxes
 
 
@@ -57,6 +66,8 @@ def main():
     ap.add_argument('--weights', default='/mnt/d/learn/rknn2.5/rt-detr-rknn/model/best.pt')
     ap.add_argument('--images', nargs='+', required=True)
     ap.add_argument('--imgsz', type=int, default=640)
+    ap.add_argument('--num-queries', type=int, default=300)
+    ap.add_argument('--decoder-layers', type=int, default=None)
     ap.add_argument('--out', default='/mnt/d/learn/rknn2.5/logs/ref_outputs.npz')
     args = ap.parse_args()
 
@@ -66,6 +77,21 @@ def main():
     print('loading', args.weights, flush=True)
     wrapper = RTDETR(args.weights)
     model = wrapper.model.cpu().eval()
+
+    # same pruning as the export script
+    decoder = model.model[-1]
+    decoder.num_queries = args.num_queries
+    if args.decoder_layers is not None:
+        decoder.decoder.layers = nn.ModuleList(
+            list(decoder.decoder.layers)[:args.decoder_layers])
+        decoder.dec_score_head = nn.ModuleList(
+            list(decoder.dec_score_head)[:args.decoder_layers])
+        decoder.dec_bbox_head = nn.ModuleList(
+            list(decoder.dec_bbox_head)[:args.decoder_layers])
+        decoder.decoder.num_layers = args.decoder_layers
+        decoder.decoder.eval_idx = args.decoder_layers - 1
+    print(f'pruned: num_queries={args.num_queries} layers={args.decoder_layers}', flush=True)
+
     if hasattr(model, 'head'):
         model.head.export = True
         model.head.format = 'onnx'

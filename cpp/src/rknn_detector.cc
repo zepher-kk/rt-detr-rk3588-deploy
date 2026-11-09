@@ -138,23 +138,39 @@ bool RKNNDetector::query_io() {
         fprintf(stderr, "[rknn] out[%d] n_elems=%u type=%d fmt=%d name=%s\n",
                 i, a.n_elems, (int)a.type, (int)a.fmt, a.name);
         out_buffers_[i].assign(a.n_elems, 0.f);
-
-        // RT-DETR: boxes = 300*4, logits = 300*10 (last match wins, like v3)
-        if (a.n_elems == 300u * 4u) boxes_idx_ = i;
-        if (a.n_elems == 300u * NUM_CLASSES) logits_idx_ = i;
     }
 
-    if (boxes_idx_ < 0 && logits_idx_ < 0) {
-        // fall back to pair inference
-        for (int i = 0; i < n_output_; ++i) {
-            if (out_attrs_[i].n_elems % 4 != 0) continue;
-            for (int j = 0; j < n_output_; ++j) {
-                if (out_attrs_[j].n_elems % NUM_CLASSES != 0) continue;
-                if (out_attrs_[i].n_elems / 4 == out_attrs_[j].n_elems / NUM_CLASSES) {
-                    boxes_idx_ = i;
-                    logits_idx_ = j;
-                }
-            }
+    // Preferred: the concatenated decoder output y = (N, 4+classes). The first
+    // 4 columns are boxes and the rest are sigmoid scores, so one output gives
+    // everything and we avoid copying two separate tensors.
+    for (int i = 0; i < n_output_; ++i) {
+        const uint32_t e = out_attrs_[i].n_elems;
+        if (e == 0 || e % (4 + NUM_CLASSES) != 0) continue;
+        const uint32_t q = e / (4 + NUM_CLASSES);
+        if (q < 1 || q > 2000) continue;
+        combined_idx_ = i;
+        queries_ = (int)q;
+        break;
+    }
+    if (combined_idx_ >= 0) {
+        boxes_elems_ = queries_ * 4;
+        logits_elems_ = queries_ * NUM_CLASSES;
+        fprintf(stderr, "[rknn] combined y=out[%d] queries=%d (scores are probabilities)\n",
+                combined_idx_, queries_);
+        return true;
+    }
+
+    // Fallback: first pair whose query counts match (decoder outputs).
+    for (int i = 0; i < n_output_ && boxes_idx_ < 0; ++i) {
+        if (out_attrs_[i].n_elems % 4 != 0) continue;
+        const uint32_t q = out_attrs_[i].n_elems / 4;
+        if (q == 0) continue;
+        for (int j = 0; j < n_output_; ++j) {
+            if (out_attrs_[j].n_elems % NUM_CLASSES != 0) continue;
+            if (out_attrs_[j].n_elems / NUM_CLASSES != q) continue;
+            boxes_idx_ = i;
+            logits_idx_ = j;
+            break;
         }
     }
     if (boxes_idx_ < 0 || logits_idx_ < 0) {
@@ -163,8 +179,8 @@ bool RKNNDetector::query_io() {
     }
     boxes_elems_ = (int)out_attrs_[boxes_idx_].n_elems;
     logits_elems_ = (int)out_attrs_[logits_idx_].n_elems;
-    fprintf(stderr, "[rknn] boxes=out[%d] (%d) logits=out[%d] (%d)\n",
-            boxes_idx_, boxes_elems_, logits_idx_, logits_elems_);
+    fprintf(stderr, "[rknn] boxes=out[%d] (%d) logits=out[%d] (%d) queries=%d\n",
+            boxes_idx_, boxes_elems_, logits_idx_, logits_elems_, boxes_elems_ / 4);
     return true;
 }
 
@@ -208,10 +224,21 @@ bool RKNNDetector::infer(const DmaBufferPtr& input, FrameBundle& out) {
 
     out.pred_boxes.resize(boxes_elems_);
     out.pred_logits.resize(logits_elems_);
-    memcpy(out.pred_boxes.data(), out_buffers_[boxes_idx_].data(),
-           boxes_elems_ * sizeof(float));
-    memcpy(out.pred_logits.data(), out_buffers_[logits_idx_].data(),
-           logits_elems_ * sizeof(float));
+    if (combined_idx_ >= 0) {
+        const float* y = out_buffers_[combined_idx_].data();
+        const int stride = 4 + NUM_CLASSES;
+        for (int i = 0; i < queries_; ++i) {
+            memcpy(out.pred_boxes.data() + (size_t)i * 4,
+                   y + (size_t)i * stride, 4 * sizeof(float));
+            memcpy(out.pred_logits.data() + (size_t)i * NUM_CLASSES,
+                   y + (size_t)i * stride + 4, NUM_CLASSES * sizeof(float));
+        }
+    } else {
+        memcpy(out.pred_boxes.data(), out_buffers_[boxes_idx_].data(),
+               boxes_elems_ * sizeof(float));
+        memcpy(out.pred_logits.data(), out_buffers_[logits_idx_].data(),
+               logits_elems_ * sizeof(float));
+    }
     out.num_boxes = boxes_elems_ / 4;
     out.num_classes = logits_elems_ / out.num_boxes;
 

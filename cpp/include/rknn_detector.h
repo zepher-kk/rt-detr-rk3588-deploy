@@ -27,6 +27,8 @@ class RKNNDetector {
     std::vector<rknn_tensor_attr> out_attrs_;
     std::vector<std::vector<float>> out_buffers_;
     int boxes_idx_ = -1, logits_idx_ = -1;
+    int combined_idx_ = -1;
+    int queries_ = 0;
     int boxes_elems_ = 0, logits_elems_ = 0;
     rknn_core_mask mask_ = RKNN_NPU_CORE_AUTO;
     rknn_tensor_attr input_attr_{};
