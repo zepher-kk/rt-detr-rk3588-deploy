@@ -52,3 +52,23 @@ RKNN 2.5 runtime 在 v3 之后的这个图上采集性能会 SIGSEGV（崩在 `r
 模型的**原生输入是 FP16**（`rknn_query(NATIVE_INPUT_ATTR)`），RGA 的 8bit 输出
 不能直接给它。v4 用 `rknn_create_mem()` + 自行做 uint8→FP16 转换。
 详见 `docs/architecture.md` §3.2。
+
+## 10. v4.1 拆分：`model mismatch: backbone '...' vs decoder '...'`
+
+两个模型不是同一批编译的。用相同的 `--custom-string` 重新编译 backbone 和 decoder
+（见 `docs/model.md` §3b）。这是刻意设计：配错的 backbone/decoder 会**能跑但输出垃圾**，
+所以启动阶段直接拒绝。
+
+## 11. v4.1 拆分：能跑但检出为 0 / 分数很低
+
+三个已知原因（都已在 `split_detector.cc` 处理，改代码时不要退化）：
+
+1. **backbone 输入符号位**：输入张量是 INT8（zp=−128），RGA 给的是 uint8。
+   直接 `memcpy` 等于把亮度整体加 0.5 → 分数塌到 0.1~0.3。必须逐字节 `^ 0x80`。
+2. **backbone 输出布局**：`rknn_outputs_get(want_float=0)` 返回的是**连续 NCHW**
+   （不是 native NC1HWC2），且缓冲区按 `size_with_stride` 分配（尾部有 padding）。
+3. **decoder 输入布局**：native NC1HWC2 FP16（`C2=8`），需要把 backbone 的
+   INT8 NCHW 反量化（per-tensor `scale`/`zp`）并重排后写入。
+
+自检方法：`RTDETR_SPLIT_DEBUG=1` 会打印每张特征图的 min/max 和 y 的分数范围，
+正常时 uav.jpg 的 y max ≈ 0.93、conf≥0.45 约 61 个检出。

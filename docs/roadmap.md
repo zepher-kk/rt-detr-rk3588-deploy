@@ -7,36 +7,41 @@
 - 输出视频 / 画框（当前只统计检出数量）
 - 共享输入缓冲，降低多实例内存争用
 
-## v4.1：裁剪模型（150 query / 2 层 decoder）
+## v4.1（已完成）：拆分模型 + INT8
 
-已实测（`--num-queries 150 --decoder-layers 2`）：
+单模型混合量化在 RKNN 2.5 上不可行（GridSample 必须 FP16 且必须走 GPU，
+而 hybrid 流程不携带 `op_target`），因此改成两个模型串联：
 
-| 项 | 300q / 3L | 150q / 2L |
+```
+backbone+neck (INT8) ──4.3 MB 特征──> decoder (FP16, GridSample 在 GPU)
+```
+
+| 项 | v4.0.1 单模型 FP16 | v4.1 拆分 INT8 |
 |---|---|---|
-| 推理 | 131.0 ms | **104.9 ms** |
-| 3 实例 | 17.99 FPS | **22.63 FPS** |
-| recall（对 PyTorch 300q） | 98.22% | 88.36% |
-| meanIoU | 0.9805 | 0.9530 |
+| AP（548 图，同口径） | 0.1985 | 0.1882 |
+| 单帧 e2e | 120.2 ms | **69.8 ms** |
+| 3 实例 | 17.99 FPS | **29.87 FPS** |
+| 4 实例（3 核） | 18.53 FPS | **33.32 FPS** |
+| 模型体积 | 46.6 MB | 17.5 + 8.1 MB |
 
-代价是 recall 从 98.2% 降到 88.4%，是否采用取决于业务对召回的要求。
+精度差异主要来自结构裁剪（150 query / 2 层），INT8 本身在 AP 上无损失
+（150q/2L FP16 与 INT8 拆分同为 0.1882）。
 
-## INT8 / 混合量化：已评估，当前不可行
+## 后续可做
 
-三条路都实测过（数据见 [`mul-grid-bug.md`](mul-grid-bug.md) §4）：
+1. **蒸馏微调**：以 300q/3L 为教师，KL(logits) + L1(box)，把 150q/2L 的
+   −0.0103 AP 找回来；不需要改推理代码。
+2. **交接优化**：反量化 + 重排目前是标量循环（已 <1 ms），
+   若换更大模型可用 NEON 指令集进一步压缩。
+3. **长稳与温控**：3/4 worker 满载下的降频曲线、连续运行 30 分钟以上。
+4. **多板扩展**：每块板独立跑 3–4 worker，按路数水平扩展。
 
-1. **纯 INT8**：GridSample 的 GPU 实现不接受 INT8，运行时崩溃
-2. **auto-hybrid**：179 个 FP16 边界，300q 410 ms（比 FP16 慢 3 倍）
-3. **区域混合**（backbone+neck INT8 / decoder FP16）：`hybrid_quantization_step1`
-   不接受 `op_target`，step2 不允许再 `config`，最终 GridSample 落到 CPU 报
-   `Unsupport CPU op`
+## 已排除的路线
 
-结论：在 native-GridSample 架构下，RKNN 2.5 上没有可用的 INT8 路径。
-若要 INT8，只能回到 v3 的 Gather 展开图（无 GPU 算子），但那条路 decoder 单帧
-255 ms，得不偿失。
-
-## 更长期
-
-- **双模型拆分**：backbone+neck 单独编 INT8，decoder 单独编 FP16，
-  C++ 里串联两个 context。可绕开混合量化的 op_target 限制，但要拆 ONNX、
-  多一次跨模型拷贝，收益与精度都未验证。
-- 多板 / 多 NPU 横向扩展
+| 路线 | 原因 |
+|---|---|
+| 单模型 INT8（含 backbone+neck） | GridSample 只能 FP16；纯 INT8 运行时报 `Unsupport CPU op` |
+| auto-hybrid | 179 个 FP16 边界，410 ms，比 FP16 还慢 3 倍 |
+| 区域混合（backbone/neck INT8 + decoder FP16 单图） | 工具链拒绝 `op_target` 中的 GridSample，最终落到 CPU |
+| `w8a16` | RK3588 不支持 |
+| 核间并行（1 实例用 3 核） | 实测 13.06 FPS，远低于数据并行 |

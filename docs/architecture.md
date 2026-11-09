@@ -35,7 +35,8 @@
 | 有界队列 | `cpp/include/pipeline.h` | 阻塞队列、毒丸终止、`shared_ptr` 传帧 |
 | 流水线 | `cpp/src/pipeline.cc` | 三级 worker、绑核、分段计时 |
 | 预处理 | `cpp/src/rga_utils.cc` | RGA letterbox + 转色，CPU 回退 |
-| 推理 | `cpp/src/rknn_detector.cc` | context、io_mem、输出预分配 |
+| 推理（单模型） | `cpp/src/rknn_detector.cc` | context、io_mem、输出预分配 |
+| 推理（v4.1 拆分） | `cpp/src/split_detector.cc` | 双 context、int8 反量化 + 布局重排 |
 | DRM/内存池 | `cpp/src/drm_alloc.cc` | DRM dumb + PRIME 或 cached heap |
 | 输入 | `cpp/src/main.cc` | 单图 / 列表 / 视频 / 时延模式 |
 
@@ -50,7 +51,7 @@
 
 ### 3.2 输入路径
 
-模型的原生输入是 **FP16 NHWC 640×640×3**（`rknn_query(NATIVE_INPUT_ATTR)`，
+FP16 单模型的原生输入是 **FP16 NHWC 640×640×3**（`rknn_query(NATIVE_INPUT_ATTR)`，
 2,457,600 字节），不是 uint8。因此：
 
 1. 用 `rknn_create_mem()` 分配 FP16 输入缓冲
@@ -58,6 +59,29 @@
 3. 每帧用 NEON 把 `uint8 RGB` 转成 `FP16 × (1/255)`
 
 比 `rknn_inputs_set` 的通用转换快约 6.8 ms/帧。
+
+### 3.2b v4.1 拆分的推理路径
+
+`--decoder` 指定后，worker 使用 `SplitDetector`（两个 context 绑同一个核）：
+
+```text
+uint8 RGB 640×640  ──(^0x80)──>  backbone INT8 输入(1.2 MB)
+                                      │
+                              backbone 推理
+                                      │
+        3 × INT8 NCHW 特征(2.1 MB)  ──(反量化 + NCHW→NC1HWC2)──>
+                                      │
+                    decoder FP16 输入(4.3 MB, 3 个 io_mem)
+                                      │
+                              decoder 推理
+                                      │
+                                 y = (150, 14)
+```
+
+- backbone 输入是 1/4 大小的 uint8，只需一次符号位翻转；
+- 交接是纯顺序读写（2.1 MB 读 + 4.3 MB 写），实测 <1 ms；
+- 两个模型同核串行，不存在跨核同步；
+- 启动时用 `custom_string` 校验两模型是否配套。
 
 ### 3.3 为什么不用 DMA 直接喂 NPU
 

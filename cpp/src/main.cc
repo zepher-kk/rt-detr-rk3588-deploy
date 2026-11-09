@@ -25,6 +25,7 @@ static void print_breakdown(int64_t n,
 static void usage(const char* argv0) {    fprintf(stderr,
             "usage: %s -m model.rknn [-i image] [options]\n"
             "  -m, --model      RKNN model path (required)\n"
+"      --decoder    decoder model: enables backbone(INT8)->decoder(FP16) split\n"
             "  -i, --image      input image (default: synthesize)\n"
             "      --image-list image list file, one path per line\n"
             "  -v, --video      input video (software decode via OpenCV/FFmpeg)\n"
@@ -42,7 +43,7 @@ static void usage(const char* argv0) {    fprintf(stderr,
 }
 
 int main(int argc, char** argv) {
-    std::string model, image, image_list, video;
+    std::string model, image, image_list, video, decoder;
     int n_npu = 3, n_pre = 2, n_post = 1, frames = 200, warmup = 20;
     size_t qcap = 16;
     std::string cores = "split";
@@ -54,6 +55,7 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         auto next = [&]() -> std::string { return (i + 1 < argc) ? argv[++i] : ""; };
         if (a == "-m" || a == "--model") model = next();
+    else if (a == "--decoder") decoder = next();
         else if (a == "-i" || a == "--image") image = next();
         else if (a == "--image-list") image_list = next();
         else if (a == "-v" || a == "--video") video = next();
@@ -89,6 +91,7 @@ int main(int argc, char** argv) {
 
         PipelineConfig cfg;
         cfg.model_path = model;
+        cfg.decoder_path = decoder;
         cfg.num_pre = n_pre;
         cfg.num_npu = n_npu;
         cfg.num_post = n_post;
@@ -177,6 +180,7 @@ int main(int argc, char** argv) {
 
     PipelineConfig cfg;
     cfg.model_path = model;
+    cfg.decoder_path = decoder;
     cfg.num_pre = n_pre;
     cfg.num_npu = n_npu;
     cfg.num_post = n_post;

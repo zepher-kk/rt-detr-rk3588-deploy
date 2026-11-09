@@ -1,9 +1,15 @@
-# v4.0.1 基准数据
+# v4.1 基准数据
 
 平台：RK3588（LubanCat，Linux 6.1.84）
-模型：`rtdetr_tpopt2_4d_mulnpu.rknn`（FP16 / 300 query / 3 层 decoder / native GridSample，46.6 MB）
 工具链：rknn-toolkit2 2.5.0 / librknnrt 2.5.0
 频率：CPU governor=performance，NPU 1 GHz，GPU 1 GHz
+
+两套配置：
+
+| 配置 | 模型 |
+|---|---|
+| FP16 单模型 | `rtdetr_tpopt2_4d_mulnpu.rknn`（FP16 / 300 query / 3 层 decoder） |
+| v4.1 拆分 | `rtdetr_v41_backbone_int8.rknn` + `rtdetr_v41_decoder_fp16.rknn`（150 query / 2 层 decoder） |
 
 > v4.0.0 的旧数据是在 decoder 缺陷（6 维 Mul 被编译成全 0）下测得的，
 > `out[2]` 分数通路是错的，不能引用。下表全部为 4-D 修复后的复测。
@@ -44,16 +50,35 @@
 
 ## 4. 精度
 
-11 张 VisDrone 图，conf≥0.45，与 PyTorch 300q/3L 参考对齐：
+同一套 `python/evaluation/visdrone_map.py`，VisDrone val 548 张：
 
-| 指标 | 值 |
-|---|---|
-| recall | 98.22% |
-| precision | 98.62% |
-| meanIoU | 0.9805 |
+| 模型 | AP | AP50 | AP75 |
+|---|---|---|---|
+| PyTorch `best.pt`（300q/3L） | 0.1996 | 0.3589 | 0.1884 |
+| ONNX FP32（导出） | 0.1996 | 0.3589 | 0.1884 |
+| RKNN FP16 300q/3L | 0.1985 | 0.3582 | 0.1872 |
+| RKNN FP16 150q/3L | 0.1925 | 0.3411 | 0.1856 |
+| RKNN FP16 300q/2L | 0.1939 | 0.3528 | 0.1832 |
+| RKNN FP16 150q/2L | 0.1882 | 0.3368 | 0.1804 |
+| **v4.1 INT8 拆分 150q/2L** | **0.1882** | 0.3359 | 0.1800 |
 
-高置信 query 与 PyTorch 的逐元素差异 < 1e-3（框 1e-4 量级），
-差异集中在低分/背景 query。
+- 导出无损：PyTorch → ONNX 完全相同；ONNX → RKNN 只掉 0.0011 AP。
+- **INT8 拆分对 AP 无影响**（0.1882 vs 0.1882），速度 +20%~32%。
+- v3.0.5 的 0.2049/0.2096 来自另一套前后处理口径，用本脚本复评 v3 模型只有 0.0968，
+  两者不可直接比较。
+
+## 4b. v4.1 拆分吞吐
+
+`uav.jpg`，30 帧 warmup，300 帧测量，`--cores split`：
+
+| 配置 | 聚合 | npu/帧 |
+|---|---|---|
+| 1 worker（3 核） | 13.06 FPS | 76.6 ms |
+| **3 worker（各 1 核）** | **29.87 FPS** | 100.3 ms |
+| **4 worker（超订 3 核）** | **33.32 FPS** | 119.3 ms |
+| 单帧 e2e（`--latency`） | — | mean 69.8 / best 67.4 ms |
+
+数据并行（3×1 核）显著优于核间并行（1×3 核）：后者只有 13 FPS。
 
 ## 5. 模型内部分段
 

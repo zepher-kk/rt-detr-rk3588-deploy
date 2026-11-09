@@ -57,6 +57,7 @@ class BoundedQueue {
 
 struct PipelineConfig {
     std::string model_path;
+    std::string decoder_path;  // non-empty: backbone(INT8) -> decoder(FP16)
     int num_pre = 2;
     int num_npu = 3;
     int num_post = 1;

@@ -19,6 +19,17 @@ def parse_args():
                    help="comma separated Op=device pairs, e.g. 'GridSample=gpu,Mul=gpu'")
     p.add_argument('--disable-rules', default='squeeze_nd_mul',
                    help="comma separated; empty string means no disabled rules")
+    p.add_argument('--inputs', default='images',
+                   help="comma separated ONNX input names")
+    p.add_argument('--input-sizes', default='',
+                   help='comma separated "NxCxHxW" per input, e.g. '
+                        '"1x3x640x640" or "1x256x80x80;1x256x40x40;1x256x20x20"')
+    p.add_argument('--no-normalize', action='store_true',
+                   help='do not add mean/std (inputs are already normalized, '
+                        'e.g. feature maps for the decoder-only model)')
+    p.add_argument('--custom-string', default='',
+                   help='build id stored in the model (checked by the runtime '
+                        'when chaining backbone + decoder)')
     p.add_argument('--mul-cpu-scope', default='none',
                    choices=['none', 'all'],
                    help="place all Mul ops on CPU (fallback for models not "
@@ -56,20 +67,32 @@ def main():
 
     rknn = RKNN(verbose=True)
     config_kwargs = dict(
-        mean_values=[[0, 0, 0]],
-        std_values=[[255, 255, 255]],
         target_platform=args.platform,
         optimization_level=args.opt_level,
         op_target=op_target,
     )
+    if not args.no_normalize:
+        config_kwargs['mean_values'] = [[0, 0, 0]]
+        config_kwargs['std_values'] = [[255, 255, 255]]
     if rules:
         config_kwargs['disable_rules'] = rules
+    if args.custom_string:
+        config_kwargs['custom_string'] = args.custom_string
     rknn.config(**config_kwargs)
+
+    inputs = [s for s in args.inputs.split(',') if s]
+    if args.input_sizes:
+        input_sizes = [[int(v) for v in s.split('x')]
+                       for s in args.input_sizes.split(';') if s]
+    elif inputs == ['images']:
+        input_sizes = [[1, 3, args.imgsz, args.imgsz]]
+    else:
+        input_sizes = None
 
     ret = rknn.load_onnx(
         model=args.onnx,
-        inputs=['images'],
-        input_size_list=[[1, 3, args.imgsz, args.imgsz]],
+        inputs=inputs,
+        input_size_list=input_sizes,
     )
     if ret != 0:
         print('load_onnx failed:', ret)

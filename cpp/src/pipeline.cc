@@ -8,6 +8,10 @@
 
 #include "rga_utils.h"
 #include "rknn_detector.h"
+#include "split_detector.h"
+
+#include <functional>
+#include <memory>
 
 static RgaPreprocessor& rga() {
     static RgaPreprocessor p;
@@ -121,11 +125,27 @@ void Pipeline::worker_npu(int idx) {
         }
     }
 
-    RKNNDetector det;
-    if (!det.init(cfg_.model_path, mask)) {
-        fprintf(stderr, "[npu] worker %d init failed\n", idx);
-        workers_ok_ = false;
-        return;
+    RKNNDetector single;
+    SplitDetector split;
+    std::function<bool(const DmaBufferPtr&, FrameBundle&)> infer;
+    if (!cfg_.decoder_path.empty()) {
+        if (!split.init(cfg_.model_path, cfg_.decoder_path, mask)) {
+            fprintf(stderr, "[npu] worker %d split init failed\n", idx);
+            workers_ok_ = false;
+            return;
+        }
+        infer = [&split](const DmaBufferPtr& in, FrameBundle& out) {
+            return split.infer(in, out);
+        };
+    } else {
+        if (!single.init(cfg_.model_path, mask)) {
+            fprintf(stderr, "[npu] worker %d init failed\n", idx);
+            workers_ok_ = false;
+            return;
+        }
+        infer = [&single](const DmaBufferPtr& in, FrameBundle& out) {
+            return single.infer(in, out);
+        };
     }
     ready_ += 1;
 
@@ -136,7 +156,7 @@ void Pipeline::worker_npu(int idx) {
         int64_t t0 = now_us();
         b->t_npu_start = t0;
         wait_npu_us_ += t0 - b->t_pre_done;
-        bool ok = det.infer(b->input_buf, *b);
+        bool ok = infer(b->input_buf, *b);
         if (!ok) {
             fprintf(stderr, "[npu] worker %d infer failed (frame %d)\n", idx, b->frame_id);
             inflight_ -= 1;

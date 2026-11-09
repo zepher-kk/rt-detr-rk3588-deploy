@@ -20,6 +20,7 @@ add_executable(rtdetr_pipeline
     src/drm_alloc.cc
     src/rga_utils.cc
     src/rknn_detector.cc
+    src/split_detector.cc
     src/pipeline.cc
     src/main.cc
 )
