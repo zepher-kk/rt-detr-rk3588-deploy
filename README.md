@@ -1,266 +1,179 @@
-![Framework](https://img.shields.io/badge/Framework-RT--DETR-orange.svg)
-![Language](https://img.shields.io/badge/Language-C++%20%7C%20Python-green.svg)
-![Platform](https://img.shields.io/badge/Platform-RK3588-blue.svg)
+# RT-DETR RK3588 部署 v4.0.0
 
-# RT-DETR RK3588 部署
+RK3588 上的 RT-DETR 部署工程：FP16 + 原生 GridSample（GPU）+ C++ 多实例流水线。
 
-简体中文 | [English](README.en.md)
+**单帧 128 ms，3 实例绑核 18.1 FPS，4 实例 18.66 FPS，精度与 PyTorch 一致。**
 
-## 核心成果
+## 核心结果
 
-**FPS 上限突破 25 FPS，基本解决 INT8 量化的精度损失问题，实现模型体积、精度与性能的多重同步优化。**
-
-| 当前模型 | 指标 |
-|---|---:|
-| 模型体积 | 28.43 MB |
-| VisDrone val AP | 0.2049 |
-| AP50 | 0.3556 |
-| AP75 | 0.2024 |
-| 1080p 推理性能 | 25.04 ± 0.09 FPS（`-n 10`） |
-
-以上为当前模型及参考测试口径下的结果，实际性能会随运行环境变化。
-
-### 模型格式对比
-
-| 格式 | 模型体积 | AP | AP50 | AP75 | 1080p FPS |
-|---|---:|---:|---:|---:|---:|
-| 原始 PT | 241.95 MB | 0.3060* | 0.5010* | — | — |
-| FP32 ONNX | 80.85 MB | 0.2180 | 0.3725 | 0.2208 | — |
-| FP16 RKNN | 55.68 MB | 0.2096 | 0.3659 | 0.2081 | 10.02 |
-| **部署 INT8（150 query）** | **28.43 MB** | **0.2049** | **0.3556** | **0.2024** | **25.04 ± 0.09** |
-
-> `*` PT 的 AP 数据为原始论文参考口径，不与下列端到端结果直接混比。
-> FP32 ONNX、FP16 RKNN 与部署 INT8 使用同一套后处理与精度评测口径。
-
-相对 FP16，部署 INT8 的体积减少 **48.9%**，AP 保留 **97.8%**，FPS 提升
-**149.9%**；相对 FP32 ONNX，体积减少 **64.8%**，AP 保留 **94.0%**。相对
-原始 PT，模型体积减少 **88.3%**。
-
-本项目提供 RK3588 上的 RT-DETR 目标检测源码，支持图片、视频文件和 V4L2
-摄像头输入。C++ 主流程使用 RGA、RKNN/NPU、GStreamer 和 RK MPP，兼顾硬件
-加速与零拷贝数据通路。
-
-仓库只提供源码，不附带编译产物、模型、数据集或宿主机配置。构建命令写在
-本文和专项文档中，由使用者根据目标环境完成构建。
-
-初次使用或希望查看原有分步说明，可阅读[小白向补充文档](README-beginner.md)。
-
-## 当前支持
-
-| 项目 | 状态 |
+| 指标 | 数值 |
 |---|---|
-| 目标平台 | RK3588 |
-| C++ 推理 | 支持 150 和 300 query 的 RT-DETR 输出 |
-| Python 推理 | 当前只支持 300 query，暂不兼容 150 query |
-| 当前部署结构 | 640 输入、150 queries、2 层 decoder |
-| 模型格式 | RKNN |
+| 模型 | `rtdetr_native_tpopt2_mulnpu_fp16.rknn`（FP16，44.4 MB，md5 `33832CF0…`） |
+| 单帧延迟 | **128.4 ms**（`--latency` best，mean 134.3） |
+| 3 实例各绑一核 | **18.06 FPS** |
+| 4 实例（3 核） | **18.66 FPS** |
+| 视频（cars.mp4，3 实例） | **17.65 FPS**，解码仅 4.3 ms/帧 |
+| 精度（conf≥0.45，11 图） | recall 100% / precision 100% / meanIoU 0.9912 |
+| 检出 | 220/220，与 PyTorch FP32 一致 |
 
-Python 推理脚本保留原实现。使用 150 query 模型时，请使用 C++ 主程序；Python
-路径将在完成对应适配和验证后再更新。
+相比 v2 的 Python 实现（7.62 FPS / 131 ms），吞吐提升 **2.4×**，单帧延迟不变。
 
-## 功能
+## v4 的改进
 
-- V4L2 摄像头、视频和图片输入
-- GStreamer 与 RK MPP 硬件编解码
-- RGA 预处理与 RKNN 零拷贝推理
-- 多 NPU worker 与核心掩码
-- 全局置信度阈值和按类阈值
-- 批量图片推理和检测结果导出
-- 实时显示、帧率覆盖和自适应画框
-- 异常退出、模型加载失败保护和队列限界
+### 1. 算子层（沿用 v2 的成果）
 
-## 数据通路
+| 改动 | 收益 |
+|---|---|
+| GridSample 走 GPU（`op_target`） | 替代 Gather 展开，335 ms → 186 ms |
+| decoder Mul 从 CPU 移到 NPU | -24.9 ms（去掉每次 4 ms 的跨设备同步） |
+| 重写 deformable attention，消掉 12 宽 transpose | -13.1 ms |
+| value 保持 channel-first，消掉布局往返 | -16.6 ms |
 
-```text
-camera/video/image
-  -> GStreamer/V4L2
-  -> RGA resize + RGB conversion
-  -> RKNN/NPU
-  -> NEON postprocess
-  -> display or hardware encode
-```
+输出逐位不变（PyTorch 侧 max diff = 0）。
 
-摄像头格式在运行时协商。设备节点、分辨率、pixel format、stride 和吞吐由
-实际硬件与连接方式决定。模块说明见 [系统架构](docs/architecture.md)。
+### 2. 工程层（v4 新增）
+
+| 改动 | 收益 |
+|---|---|
+| C++ 三级流水线（pre → NPU → post，有界队列 + 背压） | 消除流水线气泡 |
+| 每 worker 独立 context，**一实例绑一核** | 7.96 → 18.06 FPS |
+| RGA 预处理（letterbox + BGR→RGB） | 解码/预处理不再占关键路径 |
+| `rknn_set_io_mem` + NEON 自转换 | 去掉 6.8 ms/帧的通用输入转换 |
+| 视频输入（OpenCV/FFmpeg 软解 + 读取线程） | 支持 mp4，仅 -1.3% 吞吐 |
 
 ## 目录
 
 ```text
 .
-├── cpp/                    C++ 源码和测试源码
-├── python/                 模型导出、量化、评估与训练工具
-├── docs/                   架构、模型、指标和排障文档
-├── img/                    示例输入
-└── img_results/            示例输出
+├── cpp/
+│   ├── include/          types / pipeline / rknn_detector / rga_utils / drm_alloc
+│   ├── src/              对应实现 + main
+│   ├── tests/            DRM 探测、RGA 自测、偏移写入验证
+│   └── CMakeLists.txt
+├── python/
+│   ├── export/           ONNX 导出（含注意力重写）
+│   ├── quantize/         ONNX → RKNN
+│   ├── runtime/          Python 推理入口（回退/对照，300 query）
+│   ├── benchmark/        板端基准、多实例、帧分布
+│   ├── evaluation/       PyTorch 参考输出与一致性对比
+│   └── deploy/           上传、启动器
+├── docs/
+│   ├── architecture.md   流水线与数据通路
+│   ├── benchmarks.md     全部实测数据
+│   ├── model.md          导出/编译参数与约束
+│   ├── troubleshooting.md 常见报错
+│   └── roadmap.md        v4.1 计划
+└── README.md
 ```
 
 ## 环境要求
 
-构建 C++ 程序需要：
+板端（RK3588）：
 
-- aarch64 C++17 工具链
-- CMake 3.10+
-- OpenCV
-- GStreamer 1.0 与 rockchipmpp
-- `librga`、libdrm 和 V4L2
-- RKNN Runtime 头文件与库
+- aarch64 C++17 工具链、CMake 3.10+
+- OpenCV 4.x（含 FFmpeg 后端，用于视频）
+- `librga`（2.x）、`libdrm`
+- RKNN Runtime **2.5.0**（`/usr/lib/librknnrt.so`）
+- 导出 `clImportMemoryARM` 的 OpenCL 库（Mali blob）
 
-Python 模型工具需要：
-
-- PyTorch 与 Ultralytics
-- ONNX 与 ONNX Runtime
-- RKNN-Toolkit2
-- Pillow（数据集转换）
-
-具体版本应按照目标板端 runtime 和模型要求选择。
+PC 端（模型转换）：rknn-toolkit2 2.5.0、ONNX、PyTorch、ultralytics。
 
 ## 构建
 
 ```bash
 cd cpp
-cmake -S . -B build -DRTDETR_INPUT_SIZE=640
-cmake --build build -j
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4
 ```
 
-默认输入尺寸为 640。模型输入尺寸、编译尺寸和预处理尺寸必须一致。
-
-板端或交叉编译所需的库路径通过 `CMakeLists.txt` 中的 CMake 变量配置。
-仓库不提供预编译二进制。
+> 不要把旧版 `librknnrt.so` 放进 `include/`。工程默认链接
+> `/usr/lib/librknnrt.so`（2.5.0）。
 
 ## 运行
 
-### 单张图片
+```bash
+# 板端 OpenCL（必需）
+export LD_LIBRARY_PATH=/home/cat/opencl_shim:$LD_LIBRARY_PATH
+
+# 单帧时延
+./build/rtdetr_pipeline -m model.rknn -i uav.jpg -n 1 -p 1 -P 1 --latency
+
+# 图片列表 + 循环压测（3 实例各绑一核）
+./build/rtdetr_pipeline -m model.rknn --image-list images.txt \
+    -n 3 -p 2 -P 2 -N 500 --cores split
+
+# 视频
+./build/rtdetr_pipeline -m model.rknn -v cars.mp4 -n 3 -p 2 -P 2 --cores split
+```
+
+## 参数
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-m, --model` | 必填 | RKNN 模型路径 |
+| `-i, --image` | — | 单图 |
+| `--image-list` | — | 图片列表（每行一个路径） |
+| `-v, --video` | — | 视频文件（软解） |
+| `-n, --npu` | 3 | NPU worker 数（每个一个 context） |
+| `-p, --pre` | 2 | 预处理线程 |
+| `-P, --post` | 1 | 后处理线程 |
+| `-q, --queue` | 16 | 每级队列容量 |
+| `-N, --frames` | 200 | 测量帧数（0 = 全部） |
+| `--warmup` | 20 | 预热帧数 |
+| `--cores` | split | `split`（每 worker 一核）/ `all` / `auto` |
+| `-c, --conf` | 0.45 | 置信度阈值 |
+| `-F, --fps` | 0 | 视频节流帧率（0 = 全速） |
+| `--latency` | — | 单帧串行时延模式 |
+
+环境变量：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `RTDETR_NO_RGA=1` | 未设置 | 关闭 RGA，走 CPU 预处理 |
+| `RTDETR_IO_MEM=0` | 未设置 | 关闭 io_mem，回退 `rknn_inputs_set` |
+| `RTDETR_DST=dma` | `heap` | 预处理输出到 DRM 缓冲（仅调试） |
+| `UAVDETR_SRC` | 内置路径 | 导出/参考脚本用的 ultralytics 源码目录 |
+
+## 模型生成
+
+见 [`docs/model.md`](docs/model.md)。关键三步：
 
 ```bash
-./build/rtdetr_pipeline \
-  -m /path/to/model.rknn \
-  -i ../img/uav.jpg \
-  -o result.jpg \
-  -c -0.53f
+python python/export/export_transpose_opt.py --weights best.pt --value-nchw \
+    --output model/rtdetr_native_tpopt2.onnx
+
+python python/quantize/convert_native_gpu.py \
+    model/rtdetr_native_tpopt2.onnx model/rtdetr_native_tpopt2_mulnpu_fp16.rknn \
+    --opt-level 0 --disable-rules squeeze_nd_mul,fuse_mul_into_gemm \
+    --op-target-map 'GridSample=gpu,Mul=npu'
 ```
 
-### 视频文件
+## 精度验证
 
 ```bash
-./build/rtdetr_pipeline \
-  -m /path/to/model.rknn \
-  -v /path/to/video.mp4 \
-  -o result.mp4 \
-  -p 2 -n 10 -P 3 -c -0.53f
+python python/evaluation/dump_ref.py --images /path/to/images/*.jpg --out ref.npz
+python python/evaluation/compare_eval.py --ref ref.npz --board board_eval.npz
 ```
 
-### 摄像头
-
-```bash
-./build/rtdetr_pipeline \
-  -m /path/to/model.rknn \
-  -d /dev/video0 \
-  -W 1280 -H 720 \
-  -c -0.53f
-```
-
-设备节点和分辨率按实际硬件填写。程序会查询摄像头支持的格式并完成协商。
-
-### 实时显示
-
-```bash
-./build/rtdetr_pipeline \
-  -m /path/to/model.rknn \
-  -v /path/to/video.mp4 \
-  --display
-```
-
-按 `q` 或 `Esc` 退出。无图形环境时，显示模块应降级而不中断检测。
-
-### 批量图片
-
-```bash
-./build/rtdetr_pipeline \
-  -m /path/to/model.rknn \
-  --image-list image_list.txt \
-  --dump-det detections.txt \
-  --profile recall \
-  -c -0.13f
-```
-
-检测导出格式：
-
-```text
-<stem> <class_id> <score> <x1> <y1> <x2> <y2>
-```
-
-完整参数见 `./build/rtdetr_pipeline -h`。
-
-## 置信度
-
-模型输出未归一化，阈值可使用负数。
-
-- `-c -0.13`：保留较多高分检测。
-- `-c -0.53`：提高召回，适合当前实时模型。
-- `--profile recall`：使用预设的按类阈值。
-- `--conf-class`：只覆盖指定类别。
-
-示例：
-
-```bash
---conf-class "0:-0.50,3:-0.15,9:-0.50"
-```
-
-不指定按类配置时，全部类别使用全局 `-c`。
-
-## 模型工具
-
-最新模型下载：[123 云盘 - rtdetr_i8.rknn](https://1856090596.share.123pan.cn/123pan/AyyRvd-SsyZv?pwd=XFT1#)
-
-模型工具按流程拆分在 `python/` 下：
-
-- [工具总览](python/README.md)
-- [ONNX 导出](python/export/README.md)
-- [RKNN 量化](python/quantization/README.md)
-- [精度评估](python/evaluation/README.md)
-- [数据集转换](python/dataset/README.md)
-- [模型工作流](docs/model-pipeline.md)
-
-流程如下：
-
-```text
-checkpoint
-  -> ONNX export
-  -> RKNN conversion
-  -> accuracy evaluation
-  -> target validation
-```
-
-模型文件、校准数据、训练权重和宿主机备份不进入仓库。
-
-## 参考指标
-
-目标模型的参考结果：
-
-| 指标 | 参考值 |
-|---|---:|
-| VisDrone val AP | 0.2049 |
-| VisDrone val AP50 | 0.3556 |
-| 1080p 推理吞吐 | 约 25 FPS |
-
-指标会随运行环境、构建参数和模型文件变化。复测时应记录同口径命令与配置，
-但不依赖固定的宿主机环境。
+Python 推理入口保留在 `python/runtime/infer.py`（300 query，用于回退或与 C++ 对照）。
 
 ## 已知限制
 
-- Python 推理入口暂无 150 query 适配。
-- 模型输入尺寸必须与编译和预处理尺寸一致。
-- 模型输出语义需要通过图片、视频和批量评估共同验证。
-- 摄像头格式与吞吐取决于实际硬件，不能沿用其他设备的固定结论。
-- 模型文件和 RKNN runtime 必须保持版本兼容。
+- **仅 FP16**：GridSample 的 GPU 实现不接受 INT8；模型 44.4 MB
+- **仅 RK3588**：RK356X 官方不支持 GridSample
+- **依赖 OpenCL**：需要导出 `clImportMemoryARM` 的 Mali 库
+- **视频为软解**：解码 4~6 ms/帧，未接 MPP（当前不是瓶颈）
+- **长稳未验证**：目前只有 200~300 帧级压测
 
-更多说明见 [常见问题](docs/troubleshooting.md)。
+## 文档
 
-## 资料
+- [架构与数据通路](docs/architecture.md)
+- [基准数据](docs/benchmarks.md)
+- [模型与编译](docs/model.md)
+- [常见问题](docs/troubleshooting.md)
+- [路线图（v4.1 混合量化）](docs/roadmap.md)
 
-- [CSDN 项目发起者的博客主页](https://blog.csdn.net/weixin_65585850?type=blog)
-- [RT-DETR 部署文章](https://blog.csdn.net/weixin_65585850/article/details/158509230?spm=1001.2014.3001.5502)
-- [RK3588 模型转换文章](https://blog.csdn.net/weixin_65585850/article/details/158575468?spm=1001.2014.3001.5502)
-- [模型与演示文件](https://drive.google.com/drive/folders/1zS1hq9Hf5GdOKOKwz2djPmIrUm8cQLn_?usp=sharing)
-- [Rockchip RKNN Toolkit2](https://github.com/rockchip-linux/rknn-toolkit2)
-- [Rockchip 官网](https://www.rock-chips.com/)
+## 致谢
+
+流水线与硬件加速思路参考 [rt-detr-rk3588-deploy](https://github.com/zepher-kk/rt-detr-rk3588-deploy)（v3）。
+本版本在 RKNN 2.5 原生 GridSample 的基础上重写了模型与推理路径，两者模型与性能口径不同，不可直接混比。

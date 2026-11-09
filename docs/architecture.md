@@ -1,43 +1,82 @@
-# 系统架构
+# v4 架构
 
-项目由输入、预处理、推理、后处理和输出五个阶段组成。摄像头路径尽量保持
-DMA 零拷贝，视频文件路径使用 GStreamer 与 RK MPP 完成硬解和硬编。
+## 1. 总览
 
 ```text
-V4L2 camera ──> V4l2ZeroCopyCapture ──┐
-                                      ├──> RGA preprocess ──> RKNN/NPU
-video/image ──> GStreamer + MPP ──────┘                         │
-                                                                v
-display/encoded output <── draw_results <── NEON postprocess
+图片 / 图片列表 / 视频
+        │
+        ▼
+  [读取线程]  （视频：OpenCV/FFmpeg 软解 + clone）
+        │
+        ▼
+   queue_raw  （有界，背压）
+        │
+        ▼
+  [pre workers]  RGA：letterbox resize + BGR→RGB → 640×640 uint8 画布
+        │
+        ▼
+   queue_npu
+        │
+        ▼
+  [npu workers]  每 worker 独立 RKNN context + 独立 NPU 核
+        │        ├ NEON: uint8 RGB → FP16 ×(1/255)
+        │        └ rknn_set_io_mem → rknn_run
+        ▼
+   queue_post
+        │
+        ▼
+  [post workers]  解码 / 阈值过滤 / 计数
 ```
 
-## 模块
+## 2. 模块
 
-| 模块 | 职责 |
-|---|---|
-| `v4l2_capture` | V4L2 采集、格式协商、超时和缓冲区生命周期 |
-| `gst_io` | 视频/JPEG 硬解、视频硬编、CFR/VFR 帧率处理 |
-| `rga_utils` | 图像缩放与颜色转换，DMA 或虚拟地址输入 |
-| `drm_alloc` | DMA buffer 分配、PRIME fd 和映射 |
-| `rknn_detector` | 模型加载、输出形状识别和零拷贝推理 |
-| `postprocess` | RT-DETR 解码、置信度过滤、NMS 和画框 |
-| `npu_pipeline` | 多 worker 调度、有界队列和批量图片复用 |
-| `main` | 命令行解析、输入路由、显示与输出 |
+| 模块 | 文件 | 职责 |
+|---|---|---|
+| 有界队列 | `cpp/include/pipeline.h` | 阻塞队列、毒丸终止、`shared_ptr` 传帧 |
+| 流水线 | `cpp/src/pipeline.cc` | 三级 worker、绑核、分段计时 |
+| 预处理 | `cpp/src/rga_utils.cc` | RGA letterbox + 转色，CPU 回退 |
+| 推理 | `cpp/src/rknn_detector.cc` | context、io_mem、输出预分配 |
+| DRM/内存池 | `cpp/src/drm_alloc.cc` | DRM dumb + PRIME 或 cached heap |
+| 输入 | `cpp/src/main.cc` | 单图 / 列表 / 视频 / 时延模式 |
 
-## 数据通路
+## 3. 关键设计
 
-摄像头帧优先使用 DRM/V4L2 DMA buffer。RGA 输出 640×640 RGB DMA buffer，
-RKNN 通过 `rknn_create_mem_from_fd` 和 `rknn_set_io_mem` 直接读取。视频文件
-由 MPP 解码为 NV12，再转换为 BGR；输出默认使用 H.264 硬编。
+### 3.1 每 worker 独立 context + 独立核
 
-当 RGA 无法安全处理源 stride 或格式时，模块回退到紧凑 DMA 或 CPU 路径。
-回退路径优先保证检测正确性，性能测试需要注明是否触发回退。
+单实例使用三核（`CORE_0_1_2`）；多实例时按 `worker_index % 3` 绑定
+`CORE_0 / CORE_1 / CORE_2`。
 
-## 模型输出
+实测：3 实例共享三核只有 10.2 FPS，各绑一核 18.1 FPS。
 
-当前运行时同时支持 150 和 300 queries。实现根据 boxes/logits 的元素数
-配对 query 数，并推导类别数；不再假定输出形状固定为 `300×4` 和
-`300×10`。
+### 3.2 输入路径
 
-模型输入默认是 640×640。`RTDETR_INPUT_SIZE` 可在 CMake 构建时覆盖，但
-运行时模型输入、预处理尺寸和编译尺寸必须一致。
+模型的原生输入是 **FP16 NHWC 640×640×3**（`rknn_query(NATIVE_INPUT_ATTR)`，
+2,457,600 字节），不是 uint8。因此：
+
+1. 用 `rknn_create_mem()` 分配 FP16 输入缓冲
+2. `rknn_set_io_mem(..., pass_through=1)` 绑定一次
+3. 每帧用 NEON 把 `uint8 RGB` 转成 `FP16 × (1/255)`
+
+比 `rknn_inputs_set` 的通用转换快约 6.8 ms/帧。
+
+### 3.3 为什么不用 DMA 直接喂 NPU
+
+DRM dumb buffer 的 `mmap` 是 uncached，`rknn_inputs_set` 读取它要 **58 ms/帧**。
+而 RGA 只能输出 8bit，原生输入又是 FP16，物理零拷贝不成立。
+因此预处理输出到 **cached heap**，再做一次显式 FP16 转换。
+
+### 3.4 视频背压
+
+读取线程 `push_frame()` 在队列满时阻塞，因此解码速度自动跟随推理速度，
+不会无限堆积内存。`-F` 可额外按源帧率节流。
+
+## 4. 计时口径
+
+`[stage]` 行输出每帧各阶段平均耗时：
+
+```
+wait_raw | pre | wait_npu | npu | wait_post | post
+```
+
+以及 `e2e`（从入队到完成）。注意：**压测时 e2e 包含排队时间**
+（队列 16×2+1 ≈ 33 帧在飞），不是单帧延迟。单帧延迟请用 `--latency`。

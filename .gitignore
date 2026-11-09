@@ -1,20 +1,36 @@
-# 编译产物
-/build/
-cpp/build/
-cpp/install/
+# build
+build/
+cmake-build-*/
 
-# 模型权重文件 (绝对不能进 Git)
-*.pt
-*.onnx
+# models (large binaries)
 *.rknn
-*.weights
+*.onnx
+*.pt
+*.npz
 
+# datasets / outputs
+data/
+dataset/
+snapshots/
+*.mp4
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png
 
+# logs
+*.log
+logs/
+/tmp/
 
-# Python 缓存
+# python
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+venv/
 
-# 你的本地结果文件
-result_video.mp4
-result_frame_*.jpg
+# editor / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
