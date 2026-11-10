@@ -254,6 +254,80 @@ Python 推理入口保留在 `python/runtime/infer.py`（300 query，用于回�
 - [6 维 Mul 缺陷与修复](docs/mul-grid-bug.md)
 - [路线图](docs/roadmap.md)
 
+---
+
+<!-- ================================================================
+     ↓↓↓ v4.1 新增内容（仅新增，未改动上文任何章节） ↓↓↓
+     每块互相独立，取舍时整块删除即可
+     ================================================================ -->
+
+## 【新增 A】版本历史
+
+| 版本 | 关键变化 | AP（同口径） | 3 实例 | 备注 |
+|---|---|---|---|---|
+| v3.0.5 | Gather 展开图 + INT8 | 0.2049* | 25.04 FPS | *官方口径，与本文不可比 |
+| v4.0.0 | native GridSample + C++ 流水线 | — | 18.06 FPS | ⚠️ decoder 有缺陷，勿引用 |
+| v4.0.1 | 修复 6 维 Mul，全 FP16 | 0.1985 | 17.99 FPS | 稳定版 |
+| v4.1.0 | backbone+neck INT8 + decoder FP16 | 0.1882 | 29.9 FPS | 当前版 |
+
+> v3 的 AP 是 v3 自己的前后处理测出来的；用本文脚本复评其模型只有 0.0968，
+> 两套口径不可直接比较（详见 `docs/benchmarks.md`）。
+
+## 【新增 B】如何使用不同版本
+
+| 想用 | 做法 |
+|---|---|
+| 最新（默认） | `git clone` 后直接编译 |
+| v4.0.1（全 FP16） | `git checkout v4.0.1`，或从 Release 下载 zip |
+| v4.0.0 | `git checkout v4.0.0`（⚠️ decoder 有缺陷） |
+| 切换两种配置 | 同一份代码：不加 `--decoder` 走 FP16；加 `--decoder` 走 INT8 拆分 |
+
+## 【新增 C】v2 / v3 能力对照
+
+v4 重写了推理路径，以下 v3 能力**尚未迁移**；如仍需要，可继续使用 `v3.0.5` 分支：
+
+| 能力 | v3.0.5 | v4.1 |
+|---|---|---|
+| 图片 / 图片列表 / 视频文件 | ✅ | ✅ |
+| V4L2 摄像头输入 | ✅ | ❌ |
+| GStreamer + RK MPP 硬解 | ✅ | ❌（OpenCV/FFmpeg 软解） |
+| 实时显示（`--display` / 帧率覆盖） | ✅ | ❌ |
+| 按类阈值（`--profile` / `--conf-class`） | ✅ | ❌（仅全局 `-c`） |
+| 批量导出检测框（`--dump-det`） | ✅ | ❌（v4 只统计数量，评估用 `python/evaluation/dump_dets_*.py`） |
+| Python 入口 | 300 query | 300 query |
+
+## 【新增 D】精度验证（VisDrone val AP）
+
+> 建议用它**替换**上面「精度验证」一节（原命令保留亦无妨）。
+
+```bash
+# 板端导出检测（FP16 单模型）
+python python/evaluation/dump_dets_board.py \
+    --model rtdetr_tpopt2_4d_mulnpu.rknn --images "visdrone_val/*.jpg" \
+    --conf 0.05 --out dets_fp16.txt
+
+# 板端导出检测（INT8 拆分）
+python python/evaluation/dump_dets_board.py \
+    --backbone rtdetr_v41_backbone_int8.rknn \
+    --decoder rtdetr_v41_decoder_fp16.rknn \
+    --images "visdrone_val/*.jpg" --conf 0.05 --out dets_split.txt
+
+# 计算 COCO 风格 AP（需要 VisDrone val 的逐图标注 txt）
+python python/evaluation/visdrone_map.py \
+    --det dets_split.txt --ann path/to/ann_dir --conf 0.05 --ignore-regions
+```
+
+## 【新增 E】2026-11-10 复测
+
+| 配置 | AP | AP50 | AP75 | 单帧 e2e | 3 worker | 4 worker |
+|---|---|---|---|---|---|---|
+| FP16 300q/3L | 0.1985 | 0.3582 | 0.1872 | 122 ms | 17.14 FPS | 18.43 FPS |
+| INT8 拆分 150q/2L | 0.1882 | 0.3359 | 0.1800 | 70 ms | 29.31 FPS | 32.95 FPS |
+
+> 与首屏数字相差 3%~5%，属于板卡长时间压测后的正常波动。
+
+<!-- ============ 新增内容结束 ============ -->
+
 ## 致谢
 
 流水线与硬件加速思路参考 [rt-detr-rk3588-deploy](https://github.com/zepher-kk/rt-detr-rk3588-deploy)（v3）。
