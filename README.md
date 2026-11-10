@@ -247,6 +247,8 @@ Python 推理入口保留在 `python/runtime/infer.py`（300 query，用于回�
 
 ## 文档
 
+<!-- 新增：新手指引入口 -->
+- [新手指引（从零跑通）](README-beginner.md)
 - [架构与数据通路](docs/architecture.md)
 - [基准数据](docs/benchmarks.md)
 - [模型与编译](docs/model.md)
