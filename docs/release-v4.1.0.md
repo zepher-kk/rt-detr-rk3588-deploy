@@ -18,6 +18,24 @@
 > 与 FP16 的 0.0103 AP 差距来自结构裁剪（150 query / 2 层 decoder），
 > INT8 本身在同一结构下无精度损失（150q/2L FP16 与 INT8 均为 0.1882）。
 
+## 预编译模型（本页 Assets）
+
+| 文件 | 大小 | md5 | 用途 |
+|---|---|---|---|
+| `rtdetr_tpopt2_4d_mulnpu.rknn` | 46.6 MB | `8961371a7b32952edccb0f1af553aa0f` | FP16 单模型（300q/3L） |
+| `rtdetr_v41_backbone_int8.rknn` | 17.5 MB | `a66a4e12b9d560a78517c503d194c3f5` | v4.1 backbone（INT8） |
+| `rtdetr_v41_decoder_fp16.rknn` | 8.1 MB | `5a182d1eb20736987c57f1cdcb58c3da` | v4.1 decoder（FP16） |
+| `md5sums.txt` | <1 KB | — | 上面三个文件的校验和 |
+
+校验：
+
+```bash
+md5sum -c md5sums.txt
+```
+
+> 两个 v4.1 模型必须**成对使用**，运行时会用 `custom_string` 校验版本，
+> 不一致会直接拒绝启动。
+
 ## 用法
 
 ```bash
