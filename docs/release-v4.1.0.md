@@ -50,7 +50,7 @@ md5sum -c md5sums.txt
 
 ## 模型
 
-模型文件不随仓库提供，构建步骤见
+预编译模型见本页 **Assets**；自行构建的步骤见
 [`docs/model.md`](https://github.com/zepher-kk/rt-detr-rk3588-deploy/blob/v4.1.0/docs/model.md) §3b：
 
 1. `python/export/split_decoder.py` 在 neck 特征处切图
