@@ -4,6 +4,14 @@
 板端：RK3588 + rknn-toolkit2 2.5.0 / librknnrt 2.5.0
 阈值口径：模型输出 `y = (300, 4+10)`，分数为 sigmoid 概率，conf = 0.45
 
+> **补充（2026-11-16，v4.1 排查）**
+> 根因已进一步收敛：不是“RKNN 2.5 完全不支持 6D 广播 Mul”，而是
+> **优化规则 `squeeze_nd_mul` 被禁用时**，6D 广播 Mul 会被编译成输出全 0。
+> 同一份 2 节点 ONNX，开规则正确、关规则全 0，与 `optimization_level` 无关。
+> 本文档的构建命令都带 `--disable-rules squeeze_nd_mul`，正是命中条件。
+> 另外，完整模型启用该规则会在 `rules/dims.py:1699` 抛 `AttributeError`。
+> 最小复现与实测矩阵见 `issues/rknn-6d-mul/`。
+
 ---
 
 ## 1. 已修复的缺陷：`Mul=npu` 让 decoder 输出全错

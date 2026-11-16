@@ -1,0 +1,334 @@
+I rknn-toolkit2 version: 2.5.0
+[1;33mW[0m [1;33mload_onnx: If you don't need to crop the model, don't set 'inputs'/'input_size_list'/'outputs'![0m
+==== build config ====
+onnx        : model/rtdetr_native_tpopt2.onnx
+output      : model/full_sqon.rknn
+platform    : rk3588
+imgsz       : 640
+opt_level   : 0
+op_target   : {'GridSample': 'gpu', 'Mul': 'npu'}
+disable_rules: ['fuse_mul_into_gemm']
+======================
+I Loading :   0%|                                                           | 0/268 [00:00<?, ?it/s]I Loading : 100%|██████████████████████████████████████████████| 268/268 [00:00<00:00, 12155.17it/s]
+D base_optimize ...
+D base_optimize done.
+D 
+D fold_constant ...
+D fold_constant done.
+D fold_constant remove nodes = ['/model.26/decoder/layers.2/cross_attn/Concat_2', '/model.26/decoder/layers.2/cross_attn/Slice_10', '/model.26/decoder/layers.2/cross_attn/Slice_9', '/model.26/decoder/layers.2/cross_attn/Shape_2', '/model.26/decoder/layers.2/cross_attn/Concat_1', '/model.26/decoder/layers.2/cross_attn/Slice_7', '/model.26/decoder/layers.2/cross_attn/Slice_6', '/model.26/decoder/layers.2/cross_attn/Shape_1', '/model.26/decoder/layers.2/cross_attn/Concat', '/model.26/decoder/layers.2/cross_attn/Slice_4', '/model.26/decoder/layers.2/cross_attn/Slice_3', '/model.26/decoder/layers.2/cross_attn/Shape', '/model.26/decoder/layers.1/cross_attn/Concat_2', '/model.26/decoder/layers.1/cross_attn/Slice_10', '/model.26/decoder/layers.1/cross_attn/Slice_9', '/model.26/decoder/layers.1/cross_attn/Shape_2', '/model.26/decoder/layers.1/cross_attn/Concat_1', '/model.26/decoder/layers.1/cross_attn/Slice_7', '/model.26/decoder/layers.1/cross_attn/Slice_6', '/model.26/decoder/layers.1/cross_attn/Shape_1', '/model.26/decoder/layers.1/cross_attn/Concat', '/model.26/decoder/layers.1/cross_attn/Slice_4', '/model.26/decoder/layers.1/cross_attn/Slice_3', '/model.26/decoder/layers.1/cross_attn/Shape', '/model.26/decoder/layers.0/cross_attn/Concat_2', '/model.26/decoder/layers.0/cross_attn/Slice_10', '/model.26/decoder/layers.0/cross_attn/Slice_9', '/model.26/decoder/layers.0/cross_attn/Shape_2', '/model.26/decoder/layers.0/cross_attn/Concat_1', '/model.26/decoder/layers.0/cross_attn/Slice_7', '/model.26/decoder/layers.0/cross_attn/Slice_6', '/model.26/decoder/layers.0/cross_attn/Shape_1', '/model.26/decoder/layers.0/cross_attn/Concat', '/model.26/decoder/layers.0/cross_attn/Slice_4', '/model.26/decoder/layers.0/cross_attn/Slice_3', '/model.26/decoder/layers.0/cross_attn/Shape', '/model.26/Concat_14', '/model.26/Concat_13', '/model.26/Shape_6', '/model.26/Mul_2', '/model.26/Gather_5', '/model.26/Gather_4', '/model.26/Shape_5', '/model.26/Concat_12', '/model.26/Concat_11', '/model.26/Shape_4', '/model.26/Mul_1', '/model.26/Gather_1', '/model.26/Gather', '/model.26/Shape_3', '/model.26/Cast_2', '/model.26/Where', '/model.26/Cast_1', '/model.26/Not_2', '/model.26/Log', '/model.26/Div_3', '/model.26/Sub', '/model.26/Not_1', '/model.26/Greater_1', '/model.26/ReduceSum', '/model.26/Cast', '/model.26/Not', '/model.26/And', '/model.26/Less', '/model.26/Greater', '/model.26/Concat_10', '/model.26/Reshape_5', '/model.26/Concat_9', '/model.26/Div_2', '/model.26/Add_2', '/model.26/Unsqueeze_8', '/model.26/Concat_8', '/model.26/Unsqueeze_7', '/model.26/Unsqueeze_6', '/model.26/Expand_5', '/model.26/Expand_4', '/model.26/Reshape_4', '/model.26/Concat_7', '/model.26/Div_1', '/model.26/Add_1', '/model.26/Unsqueeze_5', '/model.26/Concat_6', '/model.26/Unsqueeze_4', '/model.26/Unsqueeze_3', '/model.26/Expand_3', '/model.26/Expand_2', '/model.26/Reshape_3', '/model.26/Concat_5', '/model.26/Div', '/model.26/Add', '/model.26/Unsqueeze_2', '/model.26/Concat_4', '/model.26/Unsqueeze_1', '/model.26/Unsqueeze', '/model.26/Expand_1', '/model.26/Expand', '/model.26/Concat_2', '/model.26/Slice_2', '/model.26/Shape_2', '/model.26/Concat_1', '/model.26/Slice_1', '/model.26/Shape_1', '/model.26/Concat', '/model.26/Slice', '/model.26/Shape', '/model.9/Cast', '/model.9/Concat_1', '/model.9/Slice', '/model.9/Shape', '/model.9/Unsqueeze_1', '/model.9/Concat', '/model.9/Cos_1', '/model.9/Sin_1', '/model.9/Cos', '/model.9/Sin', '/model.9/MatMul_1', '/model.9/MatMul', '/model.9/Unsqueeze', '/model.9/Mul', '/model.9/Reciprocal', '/model.9/Pow']
+D Fixed the shape information of some tensor!
+D 
+D correct_ops ...
+D correct_ops done.
+D 
+D fuse_ops ...
+D fuse_ops results:
+D     swap_transpose_mul: remove node = ['/model.9/ma/Transpose_2', '/model.9/ma/Mul'], add node = ['/model.9/ma/Mul', '/model.9/ma/Transpose_2']
+D     fuse_reshape_transpose: remove node = ['/model.9/ma/Transpose_6']
+D     replace_torch_layernorm: remove node = ['/model.9/norm1/ReduceMean', '/model.9/norm1/Sub', '/model.9/norm1/Pow', '/model.9/norm1/ReduceMean_1', '/model.9/norm1/Add', '/model.9/norm1/Sqrt', '/model.9/norm1/Div', '/model.9/norm1/Mul', '/model.9/norm1/Add_1'], add node = ['/model.9/Add_1_output_0_tp', '/model.9/Add_1_output_0_tp_rs', '/model.9/norm1/ReduceMean_2ln', '/model.9/norm1/ReduceMean_2ln_rs', '/model.9/norm1/ReduceMean_2ln_rs_tp']
+D     replace_torch_gelu: remove node = ['/model.9/act/Div', '/model.9/act/Erf', '/model.9/act/Add', '/model.9/act/Mul', '/model.9/act/Mul_1'], add node = ['/model.9/act/Mul_1_2gelu']
+D     replace_torch_layernorm: remove node = ['/model.9/norm2/ReduceMean', '/model.9/norm2/Sub', '/model.9/norm2/Pow', '/model.9/norm2/ReduceMean_1', '/model.9/norm2/Add', '/model.9/norm2/Sqrt', '/model.9/norm2/Div', '/model.9/norm2/Mul', '/model.9/norm2/Add_1'], add node = ['/model.9/Add_2_output_0_tp', '/model.9/Add_2_output_0_tp_rs', '/model.9/norm2/ReduceMean_2ln', '/model.9/norm2/ReduceMean_2ln_rs', '/model.9/norm2/ReduceMean_2ln_rs_tp']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.10/act/Sigmoid', '/model.10/act/Mul'], add node = ['/model.10/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.14/cv1/act/Sigmoid', '/model.14/cv1/act/Mul'], add node = ['/model.14/cv1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.14/m/m.0/conv2/conv/Conv', '/model.14/m/m.0/conv1/conv/Conv', '/model.14/m/m.0/Add'], add node = ['/model.14/m/m.0/Add_fused']
+D     remove_invalid_add: remove node = ['/model.14/m/m.0/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.14/m/m.0/act/Sigmoid', '/model.14/m/m.0/act/Mul'], add node = ['/model.14/m/m.0/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.14/m/m.1/conv2/conv/Conv', '/model.14/m/m.1/conv1/conv/Conv', '/model.14/m/m.1/Add'], add node = ['/model.14/m/m.1/Add_fused']
+D     remove_invalid_add: remove node = ['/model.14/m/m.1/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.14/m/m.1/act/Sigmoid', '/model.14/m/m.1/act/Mul'], add node = ['/model.14/m/m.1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.14/m/m.2/conv2/conv/Conv', '/model.14/m/m.2/conv1/conv/Conv', '/model.14/m/m.2/Add'], add node = ['/model.14/m/m.2/Add_fused']
+D     remove_invalid_add: remove node = ['/model.14/m/m.2/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.14/m/m.2/act/Sigmoid', '/model.14/m/m.2/act/Mul'], add node = ['/model.14/m/m.2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.14/cv2/act/Sigmoid', '/model.14/cv2/act/Mul'], add node = ['/model.14/cv2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.14/cv3/act/Sigmoid', '/model.14/cv3/act/Mul'], add node = ['/model.14/cv3/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.15/act/Sigmoid', '/model.15/act/Mul'], add node = ['/model.15/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.19/cv1/act/Sigmoid', '/model.19/cv1/act/Mul'], add node = ['/model.19/cv1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.19/m/m.0/conv2/conv/Conv', '/model.19/m/m.0/conv1/conv/Conv', '/model.19/m/m.0/Add'], add node = ['/model.19/m/m.0/Add_fused']
+D     remove_invalid_add: remove node = ['/model.19/m/m.0/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.19/m/m.0/act/Sigmoid', '/model.19/m/m.0/act/Mul'], add node = ['/model.19/m/m.0/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.19/m/m.1/conv2/conv/Conv', '/model.19/m/m.1/conv1/conv/Conv', '/model.19/m/m.1/Add'], add node = ['/model.19/m/m.1/Add_fused']
+D     remove_invalid_add: remove node = ['/model.19/m/m.1/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.19/m/m.1/act/Sigmoid', '/model.19/m/m.1/act/Mul'], add node = ['/model.19/m/m.1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.19/m/m.2/conv2/conv/Conv', '/model.19/m/m.2/conv1/conv/Conv', '/model.19/m/m.2/Add'], add node = ['/model.19/m/m.2/Add_fused']
+D     remove_invalid_add: remove node = ['/model.19/m/m.2/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.19/m/m.2/act/Sigmoid', '/model.19/m/m.2/act/Mul'], add node = ['/model.19/m/m.2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.19/cv2/act/Sigmoid', '/model.19/cv2/act/Mul'], add node = ['/model.19/cv2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.19/cv3/act/Sigmoid', '/model.19/cv3/act/Mul'], add node = ['/model.19/cv3/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.20/act/Sigmoid', '/model.20/act/Mul'], add node = ['/model.20/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.22/cv1/act/Sigmoid', '/model.22/cv1/act/Mul'], add node = ['/model.22/cv1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.22/m/m.0/conv2/conv/Conv', '/model.22/m/m.0/conv1/conv/Conv', '/model.22/m/m.0/Add'], add node = ['/model.22/m/m.0/Add_fused']
+D     remove_invalid_add: remove node = ['/model.22/m/m.0/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.22/m/m.0/act/Sigmoid', '/model.22/m/m.0/act/Mul'], add node = ['/model.22/m/m.0/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.22/m/m.1/conv2/conv/Conv', '/model.22/m/m.1/conv1/conv/Conv', '/model.22/m/m.1/Add'], add node = ['/model.22/m/m.1/Add_fused']
+D     remove_invalid_add: remove node = ['/model.22/m/m.1/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.22/m/m.1/act/Sigmoid', '/model.22/m/m.1/act/Mul'], add node = ['/model.22/m/m.1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.22/m/m.2/conv2/conv/Conv', '/model.22/m/m.2/conv1/conv/Conv', '/model.22/m/m.2/Add'], add node = ['/model.22/m/m.2/Add_fused']
+D     remove_invalid_add: remove node = ['/model.22/m/m.2/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.22/m/m.2/act/Sigmoid', '/model.22/m/m.2/act/Mul'], add node = ['/model.22/m/m.2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.22/cv2/act/Sigmoid', '/model.22/cv2/act/Mul'], add node = ['/model.22/cv2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.22/cv3/act/Sigmoid', '/model.22/cv3/act/Mul'], add node = ['/model.22/cv3/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.23/act/Sigmoid', '/model.23/act/Mul'], add node = ['/model.23/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.25/cv1/act/Sigmoid', '/model.25/cv1/act/Mul'], add node = ['/model.25/cv1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.25/m/m.0/conv2/conv/Conv', '/model.25/m/m.0/conv1/conv/Conv', '/model.25/m/m.0/Add'], add node = ['/model.25/m/m.0/Add_fused']
+D     remove_invalid_add: remove node = ['/model.25/m/m.0/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.25/m/m.0/act/Sigmoid', '/model.25/m/m.0/act/Mul'], add node = ['/model.25/m/m.0/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.25/m/m.1/conv2/conv/Conv', '/model.25/m/m.1/conv1/conv/Conv', '/model.25/m/m.1/Add'], add node = ['/model.25/m/m.1/Add_fused']
+D     remove_invalid_add: remove node = ['/model.25/m/m.1/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.25/m/m.1/act/Sigmoid', '/model.25/m/m.1/act/Mul'], add node = ['/model.25/m/m.1/act/Mul_2exswish']
+D     fuse_conv_conv_add: remove node = ['/model.25/m/m.2/conv2/conv/Conv', '/model.25/m/m.2/conv1/conv/Conv', '/model.25/m/m.2/Add'], add node = ['/model.25/m/m.2/Add_fused']
+D     remove_invalid_add: remove node = ['/model.25/m/m.2/Add_1']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.25/m/m.2/act/Sigmoid', '/model.25/m/m.2/act/Mul'], add node = ['/model.25/m/m.2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.25/cv2/act/Sigmoid', '/model.25/cv2/act/Mul'], add node = ['/model.25/cv2/act/Mul_2exswish']
+D     fuse_sigmoid_mul_to_exswish: remove node = ['/model.25/cv3/act/Sigmoid', '/model.25/cv3/act/Mul'], add node = ['/model.25/cv3/act/Mul_2exswish']
+D     swap_mul_reshape: remove node = ['/model.26/Mul', '/model.26/enc_output/enc_output.0/Reshape'], add node = ['/model.26/enc_output/enc_output.0/Reshape', '/model.26/Mul']
+D     replace_torch_layernorm: remove node = ['/model.26/enc_output/enc_output.1/ReduceMean', '/model.26/enc_output/enc_output.1/Sub', '/model.26/enc_output/enc_output.1/Pow', '/model.26/enc_output/enc_output.1/ReduceMean_1', '/model.26/enc_output/enc_output.1/Add', '/model.26/enc_output/enc_output.1/Sqrt', '/model.26/enc_output/enc_output.1/Div', '/model.26/enc_output/enc_output.1/Mul', '/model.26/enc_output/enc_output.1/Add_1'], add node = ['/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp', '/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp_rs', '/model.26/enc_output/enc_output.1/ReduceMean_2ln', '/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs', '/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs_tp']
+D     remove_invalid_add: remove node = ['/model.26/Add_3']
+D     bypass_two_reshape: remove node = ['/model.26/Reshape_8', '/model.26/Reshape_7', '/model.26/enc_bbox_head/layers.0/Reshape']
+D     swap_reshape_relu: remove node = ['/model.26/enc_bbox_head/layers.0/Reshape_1', '/model.26/enc_bbox_head/Relu', '/model.26/enc_bbox_head/layers.1/Reshape'], add node = ['/model.26/enc_bbox_head/Relu', '/model.26/enc_bbox_head/layers.0/Reshape_1']
+D     swap_reshape_relu: remove node = ['/model.26/enc_bbox_head/layers.1/Reshape_1', '/model.26/enc_bbox_head/Relu_1', '/model.26/enc_bbox_head/layers.2/Reshape'], add node = ['/model.26/enc_bbox_head/Relu_1', '/model.26/enc_bbox_head/layers.1/Reshape_1']
+D     remove_invalid_add: remove node = ['/model.26/Add_5']
+D     bypass_two_reshape: remove node = ['/model.26/Reshape_12', '/model.26/Reshape_11']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/query_pos_head/layers.0/Reshape_1', '/model.26/decoder/query_pos_head/Relu', '/model.26/decoder/query_pos_head/layers.1/Reshape'], add node = ['/model.26/decoder/query_pos_head/Relu', '/model.26/decoder/query_pos_head/layers.0/Reshape_1']
+D     swap_transpose_mul: remove node = ['/model.26/decoder/layers.0/self_attn/Transpose', '/model.26/decoder/layers.0/self_attn/Mul'], add node = ['/model.26/decoder/layers.0/self_attn/Mul', '/model.26/decoder/layers.0/self_attn/Transpose']
+D     fuse_reshape_transpose: remove node = ['/model.26/decoder/layers.0/Transpose_2']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.0/norm1/ReduceMean', '/model.26/decoder/layers.0/norm1/Sub', '/model.26/decoder/layers.0/norm1/Pow', '/model.26/decoder/layers.0/norm1/ReduceMean_1', '/model.26/decoder/layers.0/norm1/Add', '/model.26/decoder/layers.0/norm1/Sqrt', '/model.26/decoder/layers.0/norm1/Div', '/model.26/decoder/layers.0/norm1/Mul', '/model.26/decoder/layers.0/norm1/Add_1'], add node = ['/model.26/decoder/layers.0/Add_1_output_0_tp', '/model.26/decoder/layers.0/Add_1_output_0_tp_rs', '/model.26/decoder/layers.0/norm1/ReduceMean_2ln', '/model.26/decoder/layers.0/norm1/ReduceMean_2ln_rs', '/model.26/decoder/layers.0/norm1/ReduceMean_2ln_rs_tp']
+D     remove_parallel_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/value_proj/Reshape', '/model.26/decoder/layers.1/cross_attn/value_proj/Reshape', '/model.26/decoder/layers.2/cross_attn/value_proj/Reshape', '/model.26/enc_output/enc_output.0/Reshape'], add node = ['/model.26/decoder/layers.0/cross_attn/value_proj/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/value_proj/Reshape_1']
+D     remove_parallel_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/sampling_offsets/Reshape', '/model.26/decoder/layers.2/cross_attn/attention_weights/Reshape'], add node = ['/model.26/decoder/layers.2/cross_attn/sampling_offsets/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/attention_weights/Reshape_1']
+D     eliminate_div_redundancy_const_dim: remove node = ['/model.26/decoder/layers.2/cross_attn/Div'], add node = ['/model.26/decoder/layers.2/cross_attn/Div']
+D     replace_parallel_slice_by_split: remove node = ['/model.26/decoder/layers.2/cross_attn/Slice_1', '/model.26/decoder/layers.2/cross_attn/Slice'], add node = ['/model.26/decoder/layers.2/cross_attn/Slice_2sp']
+D     eliminate_mul_redundancy_const_dim: remove node = ['/model.26/decoder/layers.2/cross_attn/Mul_2'], add node = ['/model.26/decoder/layers.2/cross_attn/Mul_2']
+D     eliminate_sub_redundancy_const_dim: remove node = ['/model.26/decoder/layers.2/cross_attn/Sub'], add node = ['/model.26/decoder/layers.2/cross_attn/Sub']
+D     replace_parallel_slice_by_split: remove node = ['/model.26/decoder/layers.2/cross_attn/Slice_2', '/model.26/decoder/layers.2/cross_attn/Slice_5', '/model.26/decoder/layers.2/cross_attn/Slice_8'], add node = ['/model.26/decoder/layers.2/cross_attn/Slice_2_2sp']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape_12']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape_13', '/model.26/decoder/layers.2/cross_attn/Transpose_7'], add node = ['/model.26/decoder/layers.2/cross_attn/Transpose_7', '/model.26/decoder/layers.2/cross_attn/Reshape_13']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.2/norm2/ReduceMean', '/model.26/decoder/layers.2/norm2/Sub', '/model.26/decoder/layers.2/norm2/Pow', '/model.26/decoder/layers.2/norm2/ReduceMean_1', '/model.26/decoder/layers.2/norm2/Add', '/model.26/decoder/layers.2/norm2/Sqrt', '/model.26/decoder/layers.2/norm2/Div', '/model.26/decoder/layers.2/norm2/Mul', '/model.26/decoder/layers.2/norm2/Add_1'], add node = ['/model.26/decoder/layers.2/Add_3_output_0_tp', '/model.26/decoder/layers.2/Add_3_output_0_tp_rs', '/model.26/decoder/layers.2/norm2/ReduceMean_2ln', '/model.26/decoder/layers.2/norm2/ReduceMean_2ln_rs', '/model.26/decoder/layers.2/norm2/ReduceMean_2ln_rs_tp']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/layers.2/linear1/Reshape_1', '/model.26/decoder/layers.2/act/Relu', '/model.26/decoder/layers.2/linear2/Reshape'], add node = ['/model.26/decoder/layers.2/act/Relu', '/model.26/decoder/layers.2/linear1/Reshape_1']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.2/norm3/ReduceMean', '/model.26/decoder/layers.2/norm3/Sub', '/model.26/decoder/layers.2/norm3/Pow', '/model.26/decoder/layers.2/norm3/ReduceMean_1', '/model.26/decoder/layers.2/norm3/Add', '/model.26/decoder/layers.2/norm3/Sqrt', '/model.26/decoder/layers.2/norm3/Div', '/model.26/decoder/layers.2/norm3/Mul', '/model.26/decoder/layers.2/norm3/Add_1'], add node = ['/model.26/decoder/layers.2/Add_4_output_0_tp', '/model.26/decoder/layers.2/Add_4_output_0_tp_rs', '/model.26/decoder/layers.2/norm3/ReduceMean_2ln', '/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs', '/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs_tp']
+D     remove_parallel_reshape: remove node = ['/model.26/decoder/dec_bbox_head.2/layers.0/Reshape', '/model.26/decoder/dec_score_head.2/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.2/layers.0/Reshape']
+D     remove_invalid_concat: remove node = ['/model.26/decoder/Concat', '/model.26/decoder/Concat_1']
+D     swap_reshape_mul: remove node = ['/model.9/ma/Reshape', '/model.9/ma/Mul'], add node = ['/model.9/ma/Mul', '/model.9/ma/Reshape']
+D     swap_reshape_transpose_v2: remove node = ['/model.9/norm1/ReduceMean_2ln_rs', '/model.9/norm1/ReduceMean_2ln_rs_tp'], add node = ['/model.9/norm1/ReduceMean_2ln_rs_tp', '/model.9/norm1/ReduceMean_2ln_rs']
+D     swap_reshape_exgelu: remove node = ['/model.9/fc1/Reshape_1', '/model.9/act/Mul_1_2gelu', '/model.9/fc2/Reshape'], add node = ['/model.9/act/Mul_1_2gelu', '/model.9/fc1/Reshape_1']
+D     bypass_two_transpose: remove node = ['/model.9/Transpose_1', '/model.9/norm2/ReduceMean_2ln_rs_tp']
+D     swap_transpose_reshape: remove node = ['/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp', '/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp_rs'], add node = ['/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp_rs', '/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs', '/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs_tp'], add node = ['/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs_tp', '/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs']
+D     remove_invalid_reshape: remove node = ['/model.26/Reshape_10', '/model.26/enc_bbox_head/layers.0/Reshape_1', '/model.26/enc_bbox_head/layers.1/Reshape_1', '/model.26/decoder/query_pos_head/layers.0/Reshape_1']
+D     swap_reshape_mul: remove node = ['/model.26/decoder/layers.0/self_attn/Reshape', '/model.26/decoder/layers.0/self_attn/Mul'], add node = ['/model.26/decoder/layers.0/self_attn/Mul', '/model.26/decoder/layers.0/self_attn/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/value_proj/Reshape_1']
+D     remove_parallel_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape', '/model.26/decoder/layers.0/cross_attn/attention_weights/Reshape'], add node = ['/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/attention_weights/Reshape_1']
+D     eliminate_div_redundancy_const_dim: remove node = ['/model.26/decoder/layers.0/cross_attn/Div'], add node = ['/model.26/decoder/layers.0/cross_attn/Div']
+D     replace_parallel_slice_by_split: remove node = ['/model.26/decoder/layers.0/cross_attn/Slice_1', '/model.26/decoder/layers.0/cross_attn/Slice'], add node = ['/model.26/decoder/layers.0/cross_attn/Slice_2sp']
+D     eliminate_mul_redundancy_const_dim: remove node = ['/model.26/decoder/layers.0/cross_attn/Mul_2'], add node = ['/model.26/decoder/layers.0/cross_attn/Mul_2']
+D     eliminate_sub_redundancy_const_dim: remove node = ['/model.26/decoder/layers.0/cross_attn/Sub'], add node = ['/model.26/decoder/layers.0/cross_attn/Sub']
+D     replace_parallel_slice_by_split: remove node = ['/model.26/decoder/layers.0/cross_attn/Slice_2', '/model.26/decoder/layers.0/cross_attn/Slice_5', '/model.26/decoder/layers.0/cross_attn/Slice_8'], add node = ['/model.26/decoder/layers.0/cross_attn/Slice_2_2sp']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape_12']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape_13', '/model.26/decoder/layers.0/cross_attn/Transpose_7'], add node = ['/model.26/decoder/layers.0/cross_attn/Transpose_7', '/model.26/decoder/layers.0/cross_attn/Reshape_13']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.0/norm2/ReduceMean', '/model.26/decoder/layers.0/norm2/Sub', '/model.26/decoder/layers.0/norm2/Pow', '/model.26/decoder/layers.0/norm2/ReduceMean_1', '/model.26/decoder/layers.0/norm2/Add', '/model.26/decoder/layers.0/norm2/Sqrt', '/model.26/decoder/layers.0/norm2/Div', '/model.26/decoder/layers.0/norm2/Mul', '/model.26/decoder/layers.0/norm2/Add_1'], add node = ['/model.26/decoder/layers.0/Add_3_output_0_tp', '/model.26/decoder/layers.0/Add_3_output_0_tp_rs', '/model.26/decoder/layers.0/norm2/ReduceMean_2ln', '/model.26/decoder/layers.0/norm2/ReduceMean_2ln_rs', '/model.26/decoder/layers.0/norm2/ReduceMean_2ln_rs_tp']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/layers.0/linear1/Reshape_1', '/model.26/decoder/layers.0/act/Relu', '/model.26/decoder/layers.0/linear2/Reshape'], add node = ['/model.26/decoder/layers.0/act/Relu', '/model.26/decoder/layers.0/linear1/Reshape_1']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.0/norm3/ReduceMean', '/model.26/decoder/layers.0/norm3/Sub', '/model.26/decoder/layers.0/norm3/Pow', '/model.26/decoder/layers.0/norm3/ReduceMean_1', '/model.26/decoder/layers.0/norm3/Add', '/model.26/decoder/layers.0/norm3/Sqrt', '/model.26/decoder/layers.0/norm3/Div', '/model.26/decoder/layers.0/norm3/Mul', '/model.26/decoder/layers.0/norm3/Add_1'], add node = ['/model.26/decoder/layers.0/Add_4_output_0_tp', '/model.26/decoder/layers.0/Add_4_output_0_tp_rs', '/model.26/decoder/layers.0/norm3/ReduceMean_2ln', '/model.26/decoder/layers.0/norm3/ReduceMean_2ln_rs', '/model.26/decoder/layers.0/norm3/ReduceMean_2ln_rs_tp']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/dec_bbox_head.0/layers.0/Reshape_1', '/model.26/decoder/dec_bbox_head.0/Relu', '/model.26/decoder/dec_bbox_head.0/layers.1/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.0/Relu', '/model.26/decoder/dec_bbox_head.0/layers.0/Reshape_1']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/dec_bbox_head.0/layers.1/Reshape_1', '/model.26/decoder/dec_bbox_head.0/Relu_1', '/model.26/decoder/dec_bbox_head.0/layers.2/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.0/Relu_1', '/model.26/decoder/dec_bbox_head.0/layers.1/Reshape_1']
+D     eliminate_sub_redundancy_const_dim: remove node = ['/model.26/decoder/Sub'], add node = ['/model.26/decoder/Sub']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/query_pos_head/layers.0_1/Reshape_1', '/model.26/decoder/query_pos_head_1/Relu', '/model.26/decoder/query_pos_head/layers.1_1/Reshape'], add node = ['/model.26/decoder/query_pos_head_1/Relu', '/model.26/decoder/query_pos_head/layers.0_1/Reshape_1']
+D     swap_transpose_mul: remove node = ['/model.26/decoder/layers.1/self_attn/Transpose', '/model.26/decoder/layers.1/self_attn/Mul'], add node = ['/model.26/decoder/layers.1/self_attn/Mul', '/model.26/decoder/layers.1/self_attn/Transpose']
+D     fuse_reshape_transpose: remove node = ['/model.26/decoder/layers.1/Transpose_2']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.1/norm1/ReduceMean', '/model.26/decoder/layers.1/norm1/Sub', '/model.26/decoder/layers.1/norm1/Pow', '/model.26/decoder/layers.1/norm1/ReduceMean_1', '/model.26/decoder/layers.1/norm1/Add', '/model.26/decoder/layers.1/norm1/Sqrt', '/model.26/decoder/layers.1/norm1/Div', '/model.26/decoder/layers.1/norm1/Mul', '/model.26/decoder/layers.1/norm1/Add_1'], add node = ['/model.26/decoder/layers.1/Add_1_output_0_tp', '/model.26/decoder/layers.1/Add_1_output_0_tp_rs', '/model.26/decoder/layers.1/norm1/ReduceMean_2ln', '/model.26/decoder/layers.1/norm1/ReduceMean_2ln_rs', '/model.26/decoder/layers.1/norm1/ReduceMean_2ln_rs_tp']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/value_proj/Reshape_1']
+D     remove_parallel_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/sampling_offsets/Reshape', '/model.26/decoder/layers.1/cross_attn/attention_weights/Reshape'], add node = ['/model.26/decoder/layers.1/cross_attn/sampling_offsets/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/attention_weights/Reshape_1']
+D     eliminate_div_redundancy_const_dim: remove node = ['/model.26/decoder/layers.1/cross_attn/Div'], add node = ['/model.26/decoder/layers.1/cross_attn/Div']
+D     replace_parallel_slice_by_split: remove node = ['/model.26/decoder/layers.1/cross_attn/Slice_1', '/model.26/decoder/layers.1/cross_attn/Slice'], add node = ['/model.26/decoder/layers.1/cross_attn/Slice_2sp']
+D     eliminate_mul_redundancy_const_dim: remove node = ['/model.26/decoder/layers.1/cross_attn/Mul_2'], add node = ['/model.26/decoder/layers.1/cross_attn/Mul_2']
+D     eliminate_sub_redundancy_const_dim: remove node = ['/model.26/decoder/layers.1/cross_attn/Sub'], add node = ['/model.26/decoder/layers.1/cross_attn/Sub']
+D     replace_parallel_slice_by_split: remove node = ['/model.26/decoder/layers.1/cross_attn/Slice_2', '/model.26/decoder/layers.1/cross_attn/Slice_5', '/model.26/decoder/layers.1/cross_attn/Slice_8'], add node = ['/model.26/decoder/layers.1/cross_attn/Slice_2_2sp']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/Reshape_12']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.1/cross_attn/Reshape_13', '/model.26/decoder/layers.1/cross_attn/Transpose_7'], add node = ['/model.26/decoder/layers.1/cross_attn/Transpose_7', '/model.26/decoder/layers.1/cross_attn/Reshape_13']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.1/norm2/ReduceMean', '/model.26/decoder/layers.1/norm2/Sub', '/model.26/decoder/layers.1/norm2/Pow', '/model.26/decoder/layers.1/norm2/ReduceMean_1', '/model.26/decoder/layers.1/norm2/Add', '/model.26/decoder/layers.1/norm2/Sqrt', '/model.26/decoder/layers.1/norm2/Div', '/model.26/decoder/layers.1/norm2/Mul', '/model.26/decoder/layers.1/norm2/Add_1'], add node = ['/model.26/decoder/layers.1/Add_3_output_0_tp', '/model.26/decoder/layers.1/Add_3_output_0_tp_rs', '/model.26/decoder/layers.1/norm2/ReduceMean_2ln', '/model.26/decoder/layers.1/norm2/ReduceMean_2ln_rs', '/model.26/decoder/layers.1/norm2/ReduceMean_2ln_rs_tp']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/layers.1/linear1/Reshape_1', '/model.26/decoder/layers.1/act/Relu', '/model.26/decoder/layers.1/linear2/Reshape'], add node = ['/model.26/decoder/layers.1/act/Relu', '/model.26/decoder/layers.1/linear1/Reshape_1']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.1/norm3/ReduceMean', '/model.26/decoder/layers.1/norm3/Sub', '/model.26/decoder/layers.1/norm3/Pow', '/model.26/decoder/layers.1/norm3/ReduceMean_1', '/model.26/decoder/layers.1/norm3/Add', '/model.26/decoder/layers.1/norm3/Sqrt', '/model.26/decoder/layers.1/norm3/Div', '/model.26/decoder/layers.1/norm3/Mul', '/model.26/decoder/layers.1/norm3/Add_1'], add node = ['/model.26/decoder/layers.1/Add_4_output_0_tp', '/model.26/decoder/layers.1/Add_4_output_0_tp_rs', '/model.26/decoder/layers.1/norm3/ReduceMean_2ln', '/model.26/decoder/layers.1/norm3/ReduceMean_2ln_rs', '/model.26/decoder/layers.1/norm3/ReduceMean_2ln_rs_tp']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/dec_bbox_head.1/layers.0/Reshape_1', '/model.26/decoder/dec_bbox_head.1/Relu', '/model.26/decoder/dec_bbox_head.1/layers.1/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.1/Relu', '/model.26/decoder/dec_bbox_head.1/layers.0/Reshape_1']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/dec_bbox_head.1/layers.1/Reshape_1', '/model.26/decoder/dec_bbox_head.1/Relu_1', '/model.26/decoder/dec_bbox_head.1/layers.2/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.1/Relu_1', '/model.26/decoder/dec_bbox_head.1/layers.1/Reshape_1']
+D     eliminate_sub_redundancy_const_dim: remove node = ['/model.26/decoder/Sub_1'], add node = ['/model.26/decoder/Sub_1']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/query_pos_head/layers.0_2/Reshape_1', '/model.26/decoder/query_pos_head_2/Relu', '/model.26/decoder/query_pos_head/layers.1_2/Reshape'], add node = ['/model.26/decoder/query_pos_head_2/Relu', '/model.26/decoder/query_pos_head/layers.0_2/Reshape_1']
+D     swap_transpose_mul: remove node = ['/model.26/decoder/layers.2/self_attn/Transpose', '/model.26/decoder/layers.2/self_attn/Mul'], add node = ['/model.26/decoder/layers.2/self_attn/Mul', '/model.26/decoder/layers.2/self_attn/Transpose']
+D     fuse_reshape_transpose: remove node = ['/model.26/decoder/layers.2/Transpose_2']
+D     replace_torch_layernorm: remove node = ['/model.26/decoder/layers.2/norm1/ReduceMean', '/model.26/decoder/layers.2/norm1/Sub', '/model.26/decoder/layers.2/norm1/Pow', '/model.26/decoder/layers.2/norm1/ReduceMean_1', '/model.26/decoder/layers.2/norm1/Add', '/model.26/decoder/layers.2/norm1/Sqrt', '/model.26/decoder/layers.2/norm1/Div', '/model.26/decoder/layers.2/norm1/Mul', '/model.26/decoder/layers.2/norm1/Add_1'], add node = ['/model.26/decoder/layers.2/Add_1_output_0_tp', '/model.26/decoder/layers.2/Add_1_output_0_tp_rs', '/model.26/decoder/layers.2/norm1/ReduceMean_2ln', '/model.26/decoder/layers.2/norm1/ReduceMean_2ln_rs', '/model.26/decoder/layers.2/norm1/ReduceMean_2ln_rs_tp']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/sampling_offsets/Reshape_1']
+D     eliminate_mul_redundancy_const_dim: remove node = ['/model.26/decoder/layers.2/cross_attn/Mul_1'], add node = ['/model.26/decoder/layers.2/cross_attn/Mul_1']
+D     reduce_reshape_op_around_split: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape_10', '/model.26/decoder/layers.2/cross_attn/Slice_2_2sp'], add node = ['/model.26/decoder/layers.2/cross_attn/Transpose_output_0_rs', '/model.26/decoder/layers.2/cross_attn/Slice_2_2sp']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape_13']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.2/norm2/ReduceMean_2ln_rs', '/model.26/decoder/layers.2/norm2/ReduceMean_2ln_rs_tp'], add node = ['/model.26/decoder/layers.2/norm2/ReduceMean_2ln_rs_tp', '/model.26/decoder/layers.2/norm2/ReduceMean_2ln_rs']
+D     remove_invalid_reshape: remove node = ['/model.26/decoder/layers.2/linear1/Reshape_1']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs', '/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs_tp'], add node = ['/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs_tp', '/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/dec_bbox_head.2/layers.0/Reshape_1', '/model.26/decoder/dec_bbox_head.2/Relu', '/model.26/decoder/dec_bbox_head.2/layers.1/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.2/Relu', '/model.26/decoder/dec_bbox_head.2/layers.0/Reshape_1']
+D     swap_reshape_relu: remove node = ['/model.26/decoder/dec_bbox_head.2/layers.1/Reshape_1', '/model.26/decoder/dec_bbox_head.2/Relu_1', '/model.26/decoder/dec_bbox_head.2/layers.2/Reshape'], add node = ['/model.26/decoder/dec_bbox_head.2/Relu_1', '/model.26/decoder/dec_bbox_head.2/layers.1/Reshape_1']
+D     eliminate_sub_redundancy_const_dim: remove node = ['/model.26/decoder/Sub_2'], add node = ['/model.26/decoder/Sub_2']
+D     remove_invalid_reshape: remove node = ['/model.9/fc1/Reshape_1']
+D     fuse_two_reshape: remove node = ['/model.9/norm2/ReduceMean_2ln_rs', '/model.26/enc_output/enc_output.0/Reshape_1']
+D     swap_transpose_norm: remove node = ['/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp', '/model.26/enc_output/enc_output.1/ReduceMean_2ln', '/model.26/enc_output/enc_output.1/ReduceMean_2ln_rs_tp'], add node = ['/model.26/enc_output/enc_output.1/ReduceMean_2ln', '/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape_1']
+D     eliminate_mul_redundancy_const_dim: remove node = ['/model.26/decoder/layers.0/cross_attn/Mul_1'], add node = ['/model.26/decoder/layers.0/cross_attn/Mul_1']
+D     reduce_reshape_op_around_split: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape_10', '/model.26/decoder/layers.0/cross_attn/Slice_2_2sp'], add node = ['/model.26/decoder/layers.0/cross_attn/Transpose_output_0_rs', '/model.26/decoder/layers.0/cross_attn/Slice_2_2sp']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape_13']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.0/norm2/ReduceMean_2ln_rs', '/model.26/decoder/layers.0/norm2/ReduceMean_2ln_rs_tp'], add node = ['/model.26/decoder/layers.0/norm2/ReduceMean_2ln_rs_tp', '/model.26/decoder/layers.0/norm2/ReduceMean_2ln_rs']
+D     remove_invalid_reshape: remove node = ['/model.26/decoder/layers.0/linear1/Reshape_1', '/model.26/decoder/dec_bbox_head.0/layers.0/Reshape_1', '/model.26/decoder/dec_bbox_head.0/layers.1/Reshape_1', '/model.26/decoder/query_pos_head/layers.0_1/Reshape_1']
+D     swap_reshape_mul: remove node = ['/model.26/decoder/layers.1/self_attn/Reshape', '/model.26/decoder/layers.1/self_attn/Mul'], add node = ['/model.26/decoder/layers.1/self_attn/Mul', '/model.26/decoder/layers.1/self_attn/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/sampling_offsets/Reshape_1']
+D     eliminate_mul_redundancy_const_dim: remove node = ['/model.26/decoder/layers.1/cross_attn/Mul_1'], add node = ['/model.26/decoder/layers.1/cross_attn/Mul_1']
+D     reduce_reshape_op_around_split: remove node = ['/model.26/decoder/layers.1/cross_attn/Reshape_10', '/model.26/decoder/layers.1/cross_attn/Slice_2_2sp'], add node = ['/model.26/decoder/layers.1/cross_attn/Transpose_output_0_rs', '/model.26/decoder/layers.1/cross_attn/Slice_2_2sp']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/Reshape_13']
+D     swap_reshape_transpose_v2: remove node = ['/model.26/decoder/layers.1/norm2/ReduceMean_2ln_rs', '/model.26/decoder/layers.1/norm2/ReduceMean_2ln_rs_tp'], add node = ['/model.26/decoder/layers.1/norm2/ReduceMean_2ln_rs_tp', '/model.26/decoder/layers.1/norm2/ReduceMean_2ln_rs']
+D     remove_invalid_reshape: remove node = ['/model.26/decoder/layers.1/linear1/Reshape_1', '/model.26/decoder/dec_bbox_head.1/layers.0/Reshape_1', '/model.26/decoder/dec_bbox_head.1/layers.1/Reshape_1', '/model.26/decoder/query_pos_head/layers.0_2/Reshape_1']
+D     swap_reshape_mul: remove node = ['/model.26/decoder/layers.2/self_attn/Reshape', '/model.26/decoder/layers.2/self_attn/Mul'], add node = ['/model.26/decoder/layers.2/self_attn/Mul', '/model.26/decoder/layers.2/self_attn/Reshape']
+D     swap_reshape_div: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape_1', '/model.26/decoder/layers.2/cross_attn/Div'], add node = ['/model.26/decoder/layers.2/cross_attn/Div', '/model.26/decoder/layers.2/cross_attn/Reshape_1']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/Transpose'], add node = ['/model.26/decoder/layers.2/cross_attn/Transpose']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape_6', '/model.26/decoder/layers.2/cross_attn/Reshape_9']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.2/norm3/ReduceMean_2ln_rs']
+D     remove_invalid_reshape: remove node = ['/model.26/decoder/dec_bbox_head.2/layers.0/Reshape_1', '/model.26/decoder/dec_bbox_head.2/layers.1/Reshape_1']
+D     swap_reshape_conv: remove node = ['/model.9/Reshape_1', '/model.10/conv/Conv'], add node = ['/model.10/conv/Conv', '/model.9/Reshape_1']
+D     fuse_transpose_reshape: remove node = ['/model.26/enc_output/enc_output.0/Reshape_1_output_0_tp']
+D     swap_reshape_div: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape_1', '/model.26/decoder/layers.0/cross_attn/Div'], add node = ['/model.26/decoder/layers.0/cross_attn/Div', '/model.26/decoder/layers.0/cross_attn/Reshape_1']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Transpose'], add node = ['/model.26/decoder/layers.0/cross_attn/Transpose']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape_6', '/model.26/decoder/layers.0/cross_attn/Reshape_9']
+D     swap_reshape_div: remove node = ['/model.26/decoder/layers.1/cross_attn/Reshape_1', '/model.26/decoder/layers.1/cross_attn/Div'], add node = ['/model.26/decoder/layers.1/cross_attn/Div', '/model.26/decoder/layers.1/cross_attn/Reshape_1']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/Transpose'], add node = ['/model.26/decoder/layers.1/cross_attn/Transpose']
+D     fuse_transpose_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/Reshape_6', '/model.26/decoder/layers.1/cross_attn/Reshape_9']
+D     swap_transpose_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/Transpose', '/model.26/decoder/layers.2/cross_attn/Transpose_output_0_rs'], add node = ['/model.26/decoder/layers.2/cross_attn/Transpose_output_0_rs', '/model.26/decoder/layers.2/cross_attn/Transpose']
+D     swap_reshape_swish: remove node = ['/model.9/Reshape_1', '/model.10/act/Mul_2exswish'], add node = ['/model.10/act/Mul_2exswish', '/model.9/Reshape_1']
+D     swap_transpose_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Transpose', '/model.26/decoder/layers.0/cross_attn/Transpose_output_0_rs'], add node = ['/model.26/decoder/layers.0/cross_attn/Transpose_output_0_rs', '/model.26/decoder/layers.0/cross_attn/Transpose']
+D     swap_transpose_reshape: remove node = ['/model.26/decoder/layers.1/cross_attn/Transpose', '/model.26/decoder/layers.1/cross_attn/Transpose_output_0_rs'], add node = ['/model.26/decoder/layers.1/cross_attn/Transpose_output_0_rs', '/model.26/decoder/layers.1/cross_attn/Transpose']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.2/cross_attn/Reshape']
+D     fuse_two_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Reshape', '/model.26/decoder/layers.1/cross_attn/Reshape']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/Reshape_output_0_rs', '/model.9/Transpose_output_0-rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.9/Transpose_output_0_rs', '/model.9/Add_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/Add_output_0_rs', '/model.9/ma/Transpose_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/Reshape_output_0_rs#1', '/model.9/ma/Transpose_1_output_0-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.9/ma/MatMul'], add node = ['/model.9/ma/Transpose_output_0_tp', '/model.9/ma/Transpose_output_0_tp_rs', '/model.9/ma/MatMul#1', '/model.9/ma/MatMul_output_0_mm_tp', '/model.9/ma/MatMul_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.9/ma/MatMul_output_0_rs', '/model.9/ma/Add_output_0-rs']
+D     unsqueeze_to_4d_mul: remove node = [], add node = ['/model.9/ma/Add_output_0_rs', '/model.9/ma/Reshape_output_0_sw-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.9/ma/MatMul_1'], add node = ['/model.9/ma/Transpose_output_0_tp#1', '/model.9/ma/Transpose_output_0_tp#1_rs', '/model.9/ma/MatMul_1#1', '/model.9/ma/MatMul_1_output_0_mm_tp', '/model.9/ma/MatMul_1_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.9/ma/MatMul_1_output_0_rs', '/model.9/ma/Add_1_output_0-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.9/ma/MatMul_2'], add node = ['/model.9/ma/Transpose_1_output_0_tp', '/model.9/ma/Transpose_1_output_0_tp_rs', '/model.9/ma/MatMul_2#1', '/model.9/ma/MatMul_2_output_0_mm_tp', '/model.9/ma/MatMul_2_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.9/ma/MatMul_2_output_0_rs', '/model.9/ma/Add_2_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/ma/Transpose_2_output_0_sw_rs', '/model.9/ma/Mul_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/ma/Reshape_2_output_0_rs', '/model.9/ma/Transpose_3_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/ma/Reshape_1_output_0_rs', '/model.9/ma/Transpose_4_output_0-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.9/ma/MatMul_3'], add node = ['/model.9/ma/Mul_output_0_tp', '/model.9/ma/Mul_output_0_tp_rs', '/model.9/ma/Transpose_4_output_0_rs', '/model.9/ma/MatMul_3#1', '/model.9/ma/MatMul_3_output_0_mm_rs']
+D     convert_softmax_to_exsoftmax13: remove node = ['/model.9/ma/Softmax'], add node = ['/model.9/ma/Softmax']
+D     convert_matmul_to_exmatmul: remove node = ['/model.9/ma/MatMul_4'], add node = ['/model.9/ma/Softmax_output_0_tp', '/model.9/ma/Softmax_output_0_tp_rs', '/model.9/ma/Transpose_3_output_0_rs', '/model.9/ma/MatMul_4#1', '/model.9/ma/MatMul_4_output_0_mm_rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/ma/MatMul_4_output_0_rs', '/model.9/ma/Transpose_5_output_0-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.9/ma/Gemm'], add node = ['/model.9/ma/Reshape_3_output_0_tp', '/model.9/ma/Reshape_3_output_0_tp_rs', '/model.9/ma/Gemm#1', '/model.9/ma/Gemm_output_0_mm_tp', '/model.9/ma/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.9/Transpose_output_0_rs#1', '/model.9/ma/Transpose_6_output_0_rs', '/model.9/Add_1_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/Add_1_output_0_rs', '/model.9/Add_1_output_0_tp-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.9/fc1/Gemm'], add node = ['/model.9/fc1/Reshape_output_0_tp', '/model.9/fc1/Reshape_output_0_tp_rs', '/model.9/fc1/Gemm#1', '/model.9/fc1/Gemm_output_0_mm_tp', '/model.9/fc1/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_exgelu: remove node = [], add node = ['/model.9/fc1/Gemm_output_0_rs', '/model.9/fc1/Reshape_1_output_0_sw-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.9/fc2/Gemm'], add node = ['/model.9/fc1/Reshape_1_output_0_sw_tp', '/model.9/fc1/Reshape_1_output_0_sw_tp_rs', '/model.9/fc2/Gemm#1', '/model.9/fc2/Gemm_output_0_mm_tp', '/model.9/fc2/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.9/norm1/Add_1_output_0_rs', '/model.9/fc2/Reshape_1_output_0_rs', '/model.9/Add_2_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.9/Add_2_output_0_rs', '/model.9/Add_2_output_0_tp-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/Reshape_output_0_rs', '/model.26/Transpose_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/Reshape_1_output_0_rs', '/model.26/Transpose_1_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/Reshape_2_output_0_rs', '/model.26/Transpose_2_output_0-rs']
+D     unsqueeze_to_4d_concat: remove node = [], add node = ['/model.26/Transpose_output_0_rs', '/model.26/Transpose_1_output_0_rs', '/model.26/Transpose_2_output_0_rs', '/model.26/Concat_3_output_0-rs']
+D     unsqueeze_to_4d_mul: remove node = [], add node = ['/model.26/decoder/layers.0/cross_attn/value_proj/Reshape_output_0_rs', '/model.26/enc_output/enc_output.0/Reshape_output_0-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/enc_output/enc_output.0/Gemm'], add node = ['/model.26/enc_output/enc_output.0/Reshape_output_0_tp', '/model.26/enc_output/enc_output.0/Reshape_output_0_tp_rs', '/model.26/enc_output/enc_output.0/Gemm#1', '/model.26/enc_output/enc_output.0/Gemm_output_0_mm_tp', '/model.26/enc_output/enc_output.0/Gemm_output_0_mm_tp_rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/enc_score_head/Gemm'], add node = ['/model.26/enc_score_head/Reshape_output_0_tp', '/model.26/enc_score_head/Reshape_output_0_tp_rs', '/model.26/enc_score_head/Gemm#1', '/model.26/enc_score_head/Gemm_output_0_mm_tp', '/model.26/enc_score_head/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_reducemax: remove node = [], add node = ['/model.26/enc_score_head/Reshape_1_output_0_rs', '/model.26/ReduceMax_output_0-rs']
+D     unsqueeze_to_4d_topk: remove node = [], add node = ['/model.26/ReduceMax_output_0_rs', '/model.26/TopK_output_1-rs']
+D     convert_flatten_to_reshape: remove node = ['/model.26/Flatten'], add node = ['/model.26/Flatten_2rs']
+D     unsqueeze_to_4d_gather: remove node = [], add node = ['/model.26/Flatten_output_0_rs', '/model.26/Gather_2_output_0-rs']
+D     unsqueeze_to_4d_gather: remove node = [], add node = ['/model.26/Gather_3_output_0-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/enc_bbox_head/layers.0/Gemm'], add node = ['/model.26/Gather_2_output_0_tp', '/model.26/Gather_2_output_0_tp_rs', '/model.26/enc_bbox_head/layers.0/Gemm#1', '/model.26/enc_bbox_head/layers.0/Gemm_output_0_mm_tp', '/model.26/enc_bbox_head/layers.0/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_relu: remove node = [], add node = ['/model.26/enc_bbox_head/layers.0/Gemm_output_0_rs', '/model.26/enc_bbox_head/layers.0/Reshape_1_output_0_sw-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/enc_bbox_head/layers.1/Gemm'], add node = ['/model.26/enc_bbox_head/layers.0/Reshape_1_output_0_sw_tp', '/model.26/enc_bbox_head/layers.0/Reshape_1_output_0_sw_tp_rs', '/model.26/enc_bbox_head/layers.1/Gemm#1', '/model.26/enc_bbox_head/layers.1/Gemm_output_0_mm_tp', '/model.26/enc_bbox_head/layers.1/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_relu: remove node = [], add node = ['/model.26/enc_bbox_head/layers.1/Gemm_output_0_rs', '/model.26/enc_bbox_head/layers.1/Reshape_1_output_0_sw-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/enc_bbox_head/layers.2/Gemm'], add node = ['/model.26/enc_bbox_head/layers.1/Reshape_1_output_0_sw_tp', '/model.26/enc_bbox_head/layers.1/Reshape_1_output_0_sw_tp_rs', '/model.26/enc_bbox_head/layers.2/Gemm#1', '/model.26/enc_bbox_head/layers.2/Gemm_output_0_mm_tp', '/model.26/enc_bbox_head/layers.2/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/enc_bbox_head/layers.2/Reshape_1_output_0_rs', '/model.26/Gather_3_output_0_rs', '/model.26/Add_4_output_0-rs']
+D     unsqueeze_to_4d_sigmoid: remove node = [], add node = ['/model.26/Add_4_output_0_rs', 'onnx::Reshape_1348-rs']
+D     convert_flatten_to_reshape: remove node = ['/model.26/Flatten_1'], add node = ['/model.26/Flatten_1_2rs']
+D     unsqueeze_to_4d_gather: remove node = [], add node = ['/model.26/Flatten_1_output_0_rs', '/model.26/Gather_6_output_0-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/decoder/query_pos_head/layers.0/Gemm'], add node = ['/model.26/decoder/query_pos_head/layers.0/Reshape_output_0_tp', '/model.26/decoder/query_pos_head/layers.0/Reshape_output_0_tp_rs', '/model.26/decoder/query_pos_head/layers.0/Gemm#1', '/model.26/decoder/query_pos_head/layers.0/Gemm_output_0_mm_tp', '/model.26/decoder/query_pos_head/layers.0/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_relu: remove node = [], add node = ['/model.26/decoder/query_pos_head/layers.0/Gemm_output_0_rs', '/model.26/decoder/query_pos_head/layers.0/Reshape_1_output_0_sw-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/decoder/query_pos_head/layers.1/Gemm'], add node = ['/model.26/decoder/query_pos_head/layers.0/Reshape_1_output_0_sw_tp', '/model.26/decoder/query_pos_head/layers.0/Reshape_1_output_0_sw_tp_rs', '/model.26/decoder/query_pos_head/layers.1/Gemm#1', '/model.26/decoder/query_pos_head/layers.1/Gemm_output_0_mm_tp', '/model.26/decoder/query_pos_head/layers.1/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/Reshape_9_output_0_rs', '/model.26/decoder/query_pos_head/layers.1/Reshape_1_output_0_rs', '/model.26/decoder/layers.0/Add_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/Add_output_0_rs', '/model.26/decoder/layers.0/Transpose_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/Reshape_9_output_0_rs#1', '/model.26/decoder/layers.0/Transpose_1_output_0-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.26/decoder/layers.0/self_attn/MatMul'], add node = ['/model.26/decoder/layers.0/Transpose_output_0_tp', '/model.26/decoder/layers.0/Transpose_output_0_tp_rs', '/model.26/decoder/layers.0/self_attn/MatMul#1', '/model.26/decoder/layers.0/self_attn/MatMul_output_0_mm_tp', '/model.26/decoder/layers.0/self_attn/MatMul_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/MatMul_output_0_rs', '/model.26/decoder/layers.0/self_attn/Add_output_0-rs']
+D     unsqueeze_to_4d_mul: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/Add_output_0_rs', '/model.26/decoder/layers.0/self_attn/Reshape_output_0_sw-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.26/decoder/layers.0/self_attn/MatMul_1'], add node = ['/model.26/decoder/layers.0/Transpose_output_0_tp#1', '/model.26/decoder/layers.0/Transpose_output_0_tp#1_rs', '/model.26/decoder/layers.0/self_attn/MatMul_1#1', '/model.26/decoder/layers.0/self_attn/MatMul_1_output_0_mm_tp', '/model.26/decoder/layers.0/self_attn/MatMul_1_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/MatMul_1_output_0_rs', '/model.26/decoder/layers.0/self_attn/Add_1_output_0-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.26/decoder/layers.0/self_attn/MatMul_2'], add node = ['/model.26/decoder/layers.0/Transpose_1_output_0_tp', '/model.26/decoder/layers.0/Transpose_1_output_0_tp_rs', '/model.26/decoder/layers.0/self_attn/MatMul_2#1', '/model.26/decoder/layers.0/self_attn/MatMul_2_output_0_mm_tp', '/model.26/decoder/layers.0/self_attn/MatMul_2_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/MatMul_2_output_0_rs', '/model.26/decoder/layers.0/self_attn/Add_2_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/Transpose_output_0_sw_rs', '/model.26/decoder/layers.0/self_attn/Mul_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/Reshape_2_output_0_rs', '/model.26/decoder/layers.0/self_attn/Transpose_1_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/Reshape_1_output_0_rs', '/model.26/decoder/layers.0/self_attn/Transpose_2_output_0-rs']
+D     convert_matmul_to_exmatmul: remove node = ['/model.26/decoder/layers.0/self_attn/MatMul_3'], add node = ['/model.26/decoder/layers.0/self_attn/Mul_output_0_tp', '/model.26/decoder/layers.0/self_attn/Mul_output_0_tp_rs', '/model.26/decoder/layers.0/self_attn/Transpose_2_output_0_rs', '/model.26/decoder/layers.0/self_attn/MatMul_3#1', '/model.26/decoder/layers.0/self_attn/MatMul_3_output_0_mm_rs']
+D     convert_softmax_to_exsoftmax13: remove node = ['/model.26/decoder/layers.0/self_attn/Softmax'], add node = ['/model.26/decoder/layers.0/self_attn/Softmax']
+D     convert_matmul_to_exmatmul: remove node = ['/model.26/decoder/layers.0/self_attn/MatMul_4'], add node = ['/model.26/decoder/layers.0/self_attn/Softmax_output_0_tp', '/model.26/decoder/layers.0/self_attn/Softmax_output_0_tp_rs', '/model.26/decoder/layers.0/self_attn/Transpose_1_output_0_rs', '/model.26/decoder/layers.0/self_attn/MatMul_4#1', '/model.26/decoder/layers.0/self_attn/MatMul_4_output_0_mm_rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/self_attn/MatMul_4_output_0_rs', '/model.26/decoder/layers.0/self_attn/Transpose_3_output_0-rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/decoder/layers.0/self_attn/Gemm'], add node = ['/model.26/decoder/layers.0/self_attn/Reshape_3_output_0_tp', '/model.26/decoder/layers.0/self_attn/Reshape_3_output_0_tp_rs', '/model.26/decoder/layers.0/self_attn/Gemm#1', '/model.26/decoder/layers.0/self_attn/Gemm_output_0_mm_tp', '/model.26/decoder/layers.0/self_attn/Gemm_output_0_mm_tp_rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/Reshape_9_output_0_rs#2', '/model.26/decoder/layers.0/Transpose_2_output_0_rs', '/model.26/decoder/layers.0/Add_1_output_0-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/Add_1_output_0_rs', '/model.26/decoder/layers.0/Add_1_output_0_tp-rs']
+D     unsqueeze_to_4d_transpose: remove node = [], add node = ['/model.26/decoder/layers.0/norm1/ReduceMean_2ln_rs_rs', '/model.26/decoder/layers.0/norm1/Add_1_output_0-rs']
+D     unsqueeze_to_4d_add: remove node = [], add node = ['/model.26/decoder/layers.0/norm1/Add_1_output_0_rs', '/model.26/decoder/query_pos_head/layers.1/Reshape_1_output_0_rs#1', '/model.26/decoder/layers.0/Add_2_output_0-rs']
+D     convert_unsqueeze_to_reshape: remove node = ['/model.26/decoder/layers.0/Unsqueeze'], add node = ['/model.26/decoder/layers.0/Unsqueeze_2rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/decoder/layers.0/cross_attn/value_proj/Gemm'], add node = ['/model.26/decoder/layers.0/cross_attn/value_proj/Reshape_output_0_tp', '/model.26/decoder/layers.0/cross_attn/value_proj/Reshape_output_0_tp_rs', '/model.26/decoder/layers.0/cross_attn/value_proj/Gemm#1', '/model.26/decoder/layers.0/cross_attn/value_proj/Gemm_output_0_mm_tp', '/model.26/decoder/layers.0/cross_attn/value_proj/Gemm_output_0_mm_tp_rs']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/decoder/layers.0/cross_attn/sampling_offsets/Gemm'], add node = ['/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape_output_0_tp', '/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape_output_0_tp_rs', '/model.26/decoder/layers.0/cross_attn/sampling_offsets/Gemm#1', '/model.26/decoder/layers.0/cross_attn/sampling_offsets/Gemm_output_0_mm_tp', '/model.26/decoder/layers.0/cross_attn/sampling_offsets/Gemm_output_0_mm_tp_rs']
+D     convert_div_to_mul: remove node = ['/model.26/decoder/layers.0/cross_attn/Div'], add node = ['/model.26/decoder/layers.0/cross_attn/Div_2mul']
+D     convert_gemm_by_exmatmul: remove node = ['/model.26/decoder/layers.0/cross_attn/attention_weights/Gemm'], add node = ['/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape_output_0_tp#1', '/model.26/decoder/layers.0/cross_attn/sampling_offsets/Reshape_output_0_tp#1_rs', '/model.26/decoder/layers.0/cross_attn/attention_weights/Gemm#1', '/model.26/decoder/layers.0/cross_attn/attention_weights/Gemm_output_0_mm_tp', '/model.26/decoder/layers.0/cross_attn/attention_weights/Gemm_output_0_mm_tp_rs']
+D     convert_softmax_to_exsoftmax13: remove node = ['/model.26/decoder/layers.0/cross_attn/Softmax'], add node = ['/model.26/decoder/layers.0/cross_attn/Softmax']
+D     convert_unsqueeze_to_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Unsqueeze'], add node = ['/model.26/decoder/layers.0/cross_attn/Unsqueeze_2rs']
+D     convert_unsqueeze_to_reshape: remove node = ['/model.26/decoder/layers.0/cross_attn/Unsqueeze_1'], add node = ['/model.26/decoder/layers.0/cross_attn/Unsqueeze_1_2rs']
+D     merge_dims_and_convert_ND_to_4D_split: remove node = ['/model.26/decoder/layers.0/cross_attn/Slice_2sp'], add node = ['/model.26/decoder/layers.0/cross_attn/Unsqueeze_1_output_0_rs', '/model.26/decoder/layers.0/cross_attn/Slice_2sp_to4D', '/model.26/decoder/layers.0/cross_attn/Slice_1_output_0_rs_rs', '/model.26/decoder/layers.0/cross_attn/Slice_output_0_rs_rs']
+D     squeeze_nd_mul: remove node = [], add node = ['/model.26/decoder/layers.0/cross_attn/Div_output_0_rs', '/model.26/decoder/layers.0/cross_attn/Slice_output_0_rs#1', '/model.26/decoder/layers.0/cross_attn/Mul_output_0-rs']
+[1;33mW[0m [1;33mbuild: Show op fuse match nodes:
+Rule: squeeze_nd_mul
+Subgraph:
+Op type: Mul
+Op name: /model.26/decoder/layers.0/cross_attn/Mul_1
+  Input:
+    /model.26/decoder/layers.0/cross_attn/Mul_output_0 : [1, 300, 8, 3, 4, 2]
+    /model.26/decoder/layers.0/cross_attn/Constant_11_output_0 : [1, 1, 1, 1, 1, 1]
+  Output:
+    /model.26/decoder/layers.0/cross_attn/Mul_1_output_0 : [1, 300, 8, 3, 4, 2]
+ 
+[0m
+[1;33mW[0m [1;33mYou can add disable_rules=['squeeze_nd_mul'] in rknn.config() to temporarily disable the error rule!
+[0m
+[1;31mE[0m [1;31mbuild: Traceback (most recent call last):
+  File "rknn/api/rknn_log.py", line 344, in rknn.api.rknn_log.error_catch_decorator.error_catch_wrapper
+  File "rknn/api/rknn_base.py", line 2083, in rknn.api.rknn_base.RKNNBase.build
+  File "rknn/api/graph_optimizer.py", line 2221, in rknn.api.graph_optimizer.GraphOptimizer.fuse_ops
+  File "rknn/api/rules/dims.py", line 1699, in rknn.api.rules.dims._p_squeeze_nd_elementwise_op
+AttributeError: 'IRGraph' object has no attribute 'node_use_target_const'
+[0m
+[1;33mW[0m [1;33mbuild: ===================== WARN(3) =====================[0m
+[1;31mE[0m [1;31mrknn-toolkit2 version: 2.5.0[0m
+Traceback (most recent call last):
+  File "rknn/api/rknn_log.py", line 344, in rknn.api.rknn_log.error_catch_decorator.error_catch_wrapper
+  File "rknn/api/rknn_base.py", line 2083, in rknn.api.rknn_base.RKNNBase.build
+  File "rknn/api/graph_optimizer.py", line 2221, in rknn.api.graph_optimizer.GraphOptimizer.fuse_ops
+  File "rknn/api/rules/dims.py", line 1699, in rknn.api.rules.dims._p_squeeze_nd_elementwise_op
+AttributeError: 'IRGraph' object has no attribute 'node_use_target_const'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/mnt/d/personal_projects/projects/rt-detr-rk3588-deploy/python/quantize/convert_native_gpu.py", line 117, in <module>
+    main()
+  File "/mnt/d/personal_projects/projects/rt-detr-rk3588-deploy/python/quantize/convert_native_gpu.py", line 101, in main
+    ret = rknn.build(do_quantization=False)
+  File "/home/zepher/miniconda3/envs/rk25/lib/python3.10/site-packages/rknn/api/rknn.py", line 203, in build
+    return self.rknn_base.build(do_quantization=do_quantization, dataset=dataset, expand_batch_size=rknn_batch_size, auto_hybrid=auto_hybrid)
+  File "rknn/api/rknn_log.py", line 349, in rknn.api.rknn_log.error_catch_decorator.error_catch_wrapper
+  File "rknn/api/rknn_log.py", line 95, in rknn.api.rknn_log.RKNNLog.e
+ValueError: Traceback (most recent call last):
+  File "rknn/api/rknn_log.py", line 344, in rknn.api.rknn_log.error_catch_decorator.error_catch_wrapper
+  File "rknn/api/rknn_base.py", line 2083, in rknn.api.rknn_base.RKNNBase.build
+  File "rknn/api/graph_optimizer.py", line 2221, in rknn.api.graph_optimizer.GraphOptimizer.fuse_ops
+  File "rknn/api/rules/dims.py", line 1699, in rknn.api.rules.dims._p_squeeze_nd_elementwise_op
+AttributeError: 'IRGraph' object has no attribute 'node_use_target_const'
+

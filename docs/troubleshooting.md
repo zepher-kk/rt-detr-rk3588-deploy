@@ -18,6 +18,15 @@
 `optimization_level=3` 触发 `fuse_mul_into_gemm` 的确定性 bug。
 同时禁用 `squeeze_nd_mul` 和 `fuse_mul_into_gemm`，或直接用 `--opt-level 0`。
 
+> **补充（2026-11-16，v4.1 排查）**：这条 workaround 有副作用。
+> 禁用 `squeeze_nd_mul` 会让 6 维广播 `Mul`（例如 RT-DETR MSDA 的
+> `(1,300,8,3,4,2) × (1,300,1,1,1,2)`）被编译成**输出全 0**，构建和推理都不报错。
+> 推荐组合改为：`--disable-rules fuse_mul_into_gemm`（保留 `squeeze_nd_mul`）；
+> 若这样会崩在 `rules/dims.py:1699`（`AttributeError: 'IRGraph' object has no
+> attribute 'node_use_target_const'`），说明该图还会命中另一个 toolkit bug，
+> 此时只能把 6 维乘改写成 4 维（`--msda-4d-grid`）。
+> 详见 `issues/rknn-6d-mul/issue.md`。
+
 ## 4. `MAP_DUMB failed: Permission denied`
 
 部分板子（如本项目的板卡）`renderD129` 支持 dumb buffer 但**不允许 mmap**，

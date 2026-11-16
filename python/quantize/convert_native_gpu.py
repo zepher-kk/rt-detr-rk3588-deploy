@@ -18,7 +18,12 @@ def parse_args():
     p.add_argument('--op-target-map', default='',
                    help="comma separated Op=device pairs, e.g. 'GridSample=gpu,Mul=gpu'")
     p.add_argument('--disable-rules', default='squeeze_nd_mul',
-                   help="comma separated; empty string means no disabled rules")
+                   help="comma separated; empty string means no disabled rules. "
+                        "NOTE: disabling squeeze_nd_mul makes a 6-D broadcast "
+                        "Mul compile to all zeros on RK3588 (silent, see "
+                        "issues/rknn-6d-mul/). Only do this for graphs that "
+                        "were exported with --msda-4d-grid, or that have no "
+                        "ND>4 broadcast elementwise ops.")
     p.add_argument('--inputs', default='images',
                    help="comma separated ONNX input names")
     p.add_argument('--input-sizes', default='',

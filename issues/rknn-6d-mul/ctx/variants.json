@@ -1,0 +1,131 @@
+[
+  {
+    "model": "v0_direct.onnx",
+    "inputs": {
+      "off_in": [
+        1,
+        300,
+        192
+      ],
+      "bbox_in": [
+        1,
+        300,
+        4
+      ]
+    },
+    "outputs": [
+      "off6",
+      "mul",
+      "mul1",
+      "add"
+    ]
+  },
+  {
+    "model": "v1_div.onnx",
+    "inputs": {
+      "off_in": [
+        1,
+        300,
+        192
+      ],
+      "bbox_in": [
+        1,
+        300,
+        4
+      ]
+    },
+    "outputs": [
+      "off_div",
+      "mul",
+      "mul1",
+      "add"
+    ]
+  },
+  {
+    "model": "v2_sigmoid.onnx",
+    "inputs": {
+      "off_in": [
+        1,
+        300,
+        192
+      ],
+      "bbox_in": [
+        1,
+        300,
+        4
+      ]
+    },
+    "outputs": [
+      "off6",
+      "mul",
+      "mul1",
+      "add"
+    ]
+  },
+  {
+    "model": "v3_both.onnx",
+    "inputs": {
+      "off_in": [
+        1,
+        300,
+        192
+      ],
+      "bbox_in": [
+        1,
+        300,
+        4
+      ]
+    },
+    "outputs": [
+      "off_div",
+      "mul",
+      "mul1",
+      "add"
+    ]
+  },
+  {
+    "model": "v4_both_tp.onnx",
+    "inputs": {
+      "off_in": [
+        1,
+        300,
+        2,
+        8,
+        3,
+        4
+      ],
+      "bbox_in": [
+        1,
+        300,
+        4
+      ]
+    },
+    "outputs": [
+      "off_div",
+      "mul",
+      "mul1",
+      "add"
+    ]
+  },
+  {
+    "model": "v5_both_mm.onnx",
+    "inputs": {
+      "off_in": [
+        1,
+        300,
+        192
+      ],
+      "bbox_in": [
+        1,
+        300,
+        4
+      ]
+    },
+    "outputs": [
+      "off_div",
+      "mul",
+      "mul1",
+      "add"
+    ]
+  }
+]
